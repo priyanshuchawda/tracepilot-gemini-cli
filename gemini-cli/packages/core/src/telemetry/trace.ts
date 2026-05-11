@@ -22,9 +22,12 @@ import {
   GEN_AI_INPUT_MESSAGES,
   GEN_AI_OPERATION_NAME,
   GEN_AI_OUTPUT_MESSAGES,
+  OPENINFERENCE_SPAN_KIND,
+  OpenInferenceSpanKind,
   SERVICE_DESCRIPTION,
   SERVICE_NAME,
   type GeminiCliOperation,
+  GeminiCliOperation as GeminiCliOperationValue,
 } from './constants.js';
 
 const TRACER_NAME = 'gemini-cli';
@@ -83,6 +86,25 @@ function isAsyncIterable<T>(value: T): value is T & AsyncIterable<unknown> {
   );
 }
 
+function getOpenInferenceSpanKind(
+  operation: GeminiCliOperation,
+): OpenInferenceSpanKind {
+  switch (operation) {
+    case GeminiCliOperationValue.LLMCall:
+      return OpenInferenceSpanKind.Llm;
+    case GeminiCliOperationValue.ToolCall:
+      return OpenInferenceSpanKind.Tool;
+    case GeminiCliOperationValue.AgentCall:
+      return OpenInferenceSpanKind.Agent;
+    case GeminiCliOperationValue.ScheduleToolCalls:
+    case GeminiCliOperationValue.UserPrompt:
+    case GeminiCliOperationValue.SystemPrompt:
+      return OpenInferenceSpanKind.Chain;
+    default:
+      return OpenInferenceSpanKind.Chain;
+  }
+}
+
 /**
  * Metadata for a span.
  */
@@ -135,6 +157,7 @@ export async function runInDevTraceSpan<R>(
   restOfSpanOpts.attributes = {
     ...restOfSpanOpts.attributes,
     [GEN_AI_CONVERSATION_ID]: sessionId,
+    [OPENINFERENCE_SPAN_KIND]: getOpenInferenceSpanKind(operation),
   };
 
   const tracer = trace.getTracer(TRACER_NAME, TRACER_VERSION);
@@ -146,6 +169,7 @@ export async function runInDevTraceSpan<R>(
         [GEN_AI_AGENT_NAME]: SERVICE_NAME,
         [GEN_AI_AGENT_DESCRIPTION]: SERVICE_DESCRIPTION,
         [GEN_AI_CONVERSATION_ID]: sessionId,
+        [OPENINFERENCE_SPAN_KIND]: getOpenInferenceSpanKind(operation),
       },
     };
     let spanEnded = false;
@@ -183,7 +207,8 @@ export async function runInDevTraceSpan<R>(
               key === GEN_AI_OPERATION_NAME ||
               key === GEN_AI_AGENT_NAME ||
               key === GEN_AI_AGENT_DESCRIPTION ||
-              key === GEN_AI_CONVERSATION_ID
+              key === GEN_AI_CONVERSATION_ID ||
+              key === OPENINFERENCE_SPAN_KIND
             ) {
               const truncated = truncateForTelemetry(value);
               if (truncated !== undefined) {

@@ -54,15 +54,20 @@ export async function resolveTelemetrySettings(options: {
   const argv = options.argv ?? {};
   const env = options.env ?? {};
   const settings = options.settings ?? {};
+  const phoenixConfigured =
+    !!env['PHOENIX_API_KEY'] &&
+    !!(env['PHOENIX_COLLECTOR_ENDPOINT'] || env['PHOENIX_BASE_URL']);
 
   const enabled =
     argv.telemetry ??
     parseBooleanEnvFlag(env['GEMINI_TELEMETRY_ENABLED']) ??
-    settings.enabled;
+    settings.enabled ??
+    (phoenixConfigured ? true : undefined);
 
   const traces =
     parseBooleanEnvFlag(env['GEMINI_TELEMETRY_TRACES_ENABLED']) ??
-    settings.traces;
+    settings.traces ??
+    (phoenixConfigured ? true : undefined);
 
   const rawTarget =
     argv.telemetryTarget ??

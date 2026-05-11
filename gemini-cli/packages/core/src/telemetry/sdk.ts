@@ -12,6 +12,7 @@ import {
   metrics,
   propagation,
 } from '@opentelemetry/api';
+import { register as registerPhoenix } from '@arizeai/phoenix-otel';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-grpc';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
@@ -50,7 +51,7 @@ import {
   GcpMetricExporter,
   GcpLogExporter,
 } from './gcp-exporters.js';
-import { TelemetryTarget } from './index.js';
+import { TelemetryTarget, DEFAULT_OTLP_ENDPOINT } from './index.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import {
   startGlobalMemoryMonitoring,
@@ -97,6 +98,12 @@ let sdk: NodeSDK | undefined;
 let spanProcessor: BatchSpanProcessor | undefined;
 let logRecordProcessor: BatchLogRecordProcessor | undefined;
 let metricReader: PeriodicExportingMetricReader | undefined;
+let phoenixTracerProvider:
+  | {
+      forceFlush?: () => Promise<void>;
+      shutdown?: () => Promise<void>;
+    }
+  | undefined;
 let telemetryInitialized = false;
 let callbackRegistered = false;
 let authListener: ((newCredentials: JWTInput) => Promise<void>) | undefined =
@@ -158,6 +165,27 @@ function parseOtlpEndpoint(
     return url.href;
   } catch (error) {
     diag.error('Invalid OTLP endpoint URL provided:', trimmedEndpoint, error);
+    return undefined;
+  }
+}
+
+function parsePhoenixCollectorUrl(
+  urlSetting: string | undefined,
+): string | undefined {
+  if (!urlSetting) {
+    return undefined;
+  }
+
+  const trimmedUrl = urlSetting.replace(/^['"]|['"]$/g, '').trim();
+  if (!trimmedUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmedUrl);
+    return url.href.replace(/\/$/, '');
+  } catch (error) {
+    diag.error('Invalid Phoenix collector URL provided:', trimmedUrl, error);
     return undefined;
   }
 }
@@ -241,6 +269,57 @@ export async function initializeTelemetry(
   const otlpProtocol = config.getTelemetryOtlpProtocol();
   const telemetryTarget = config.getTelemetryTarget();
   const useCollector = config.getTelemetryUseCollector();
+
+  const phoenixApiKey = process.env['PHOENIX_API_KEY']
+    ?.replace(/^['"]|['"]$/g, '')
+    .trim();
+  const phoenixCollectorEndpoint = process.env['PHOENIX_COLLECTOR_ENDPOINT'];
+  const phoenixBaseUrl = process.env['PHOENIX_BASE_URL'];
+  const phoenixProject = process.env['PHOENIX_PROJECT']?.trim() || 'tracepilot';
+
+  // Prefer Phoenix OTEL registration only when explicit Phoenix settings are present
+  // and Gemini OTLP settings are not provided. This keeps existing telemetry paths intact.
+  const phoenixUrl = parsePhoenixCollectorUrl(
+    phoenixCollectorEndpoint || phoenixBaseUrl,
+  );
+  const isDefaultOtlpEndpoint =
+    !!otlpEndpoint &&
+    parseOtlpEndpoint(otlpEndpoint, otlpProtocol) === DEFAULT_OTLP_ENDPOINT;
+  const shouldUsePhoenixRegister =
+    !!phoenixApiKey &&
+    !!phoenixUrl &&
+    telemetryTarget !== TelemetryTarget.GCP &&
+    !config.getTelemetryOutfile() &&
+    (isDefaultOtlpEndpoint ||
+      (!process.env['GEMINI_TELEMETRY_OTLP_ENDPOINT'] &&
+        !process.env['OTEL_EXPORTER_OTLP_ENDPOINT']));
+
+  if (shouldUsePhoenixRegister) {
+    try {
+      phoenixTracerProvider = registerPhoenix({
+        projectName: phoenixProject,
+        url: phoenixUrl,
+        apiKey: phoenixApiKey,
+        instrumentations: [new HttpInstrumentation()],
+      }) as {
+        forceFlush?: () => Promise<void>;
+        shutdown?: () => Promise<void>;
+      };
+
+      if (config.getDebugMode()) {
+        debugLogger.log('Phoenix OTEL tracing registered successfully.');
+      }
+
+      telemetryInitialized = true;
+      void flushTelemetryBuffer();
+      return;
+    } catch (error) {
+      debugLogger.error(
+        'Failed to initialize Phoenix OTEL tracing. Falling back to default telemetry SDK.',
+        error,
+      );
+    }
+  }
 
   const parsedEndpoint = parseOtlpEndpoint(otlpEndpoint, otlpProtocol);
   const telemetryOutfile = config.getTelemetryOutfile();
@@ -395,9 +474,24 @@ export async function initializeTelemetry(
  * This is useful for ensuring telemetry is written before critical operations like /clear.
  */
 export async function flushTelemetry(config: Config): Promise<void> {
-  if (!telemetryInitialized || !spanProcessor || !logRecordProcessor) {
+  if (!telemetryInitialized) {
     return;
   }
+
+  if (phoenixTracerProvider?.forceFlush) {
+    try {
+      await phoenixTracerProvider.forceFlush();
+      return;
+    } catch (error) {
+      debugLogger.error('Error flushing Phoenix tracer provider:', error);
+      return;
+    }
+  }
+
+  if (!spanProcessor || !logRecordProcessor) {
+    return;
+  }
+
   try {
     // Force flush all pending telemetry to disk
     await Promise.all([
@@ -417,9 +511,58 @@ export async function shutdownTelemetry(
   config: Config,
   fromProcessExit = true,
 ): Promise<void> {
-  if (!telemetryInitialized || !sdk) {
+  if (!telemetryInitialized) {
     return;
   }
+
+  if (phoenixTracerProvider?.shutdown) {
+    try {
+      await phoenixTracerProvider.shutdown();
+      if (config.getDebugMode() && fromProcessExit) {
+        debugLogger.log('Phoenix tracer provider shut down successfully.');
+      }
+    } catch (error) {
+      debugLogger.error('Error shutting down Phoenix tracer provider:', error);
+    } finally {
+      telemetryInitialized = false;
+      phoenixTracerProvider = undefined;
+      trace.disable();
+      context.disable();
+      metrics.disable();
+      propagation.disable();
+      diag.disable();
+      if (authListener) {
+        authEvents.off('post_auth', authListener);
+        authListener = undefined;
+      }
+      if (keychainAvailabilityListener) {
+        coreEvents.off(
+          CoreEvent.TelemetryKeychainAvailability,
+          keychainAvailabilityListener,
+        );
+        keychainAvailabilityListener = undefined;
+      }
+      if (tokenStorageTypeListener) {
+        coreEvents.off(
+          CoreEvent.TelemetryTokenStorageType,
+          tokenStorageTypeListener,
+        );
+        tokenStorageTypeListener = undefined;
+      }
+      callbackRegistered = false;
+      activeTelemetryEmail = undefined;
+      spanProcessor = undefined;
+      logRecordProcessor = undefined;
+      metricReader = undefined;
+      sdk = undefined;
+    }
+    return;
+  }
+
+  if (!sdk) {
+    return;
+  }
+
   try {
     ClearcutLogger.getInstance()?.shutdown();
     await sdk.shutdown();
@@ -459,5 +602,9 @@ export async function shutdownTelemetry(
     }
     callbackRegistered = false;
     activeTelemetryEmail = undefined;
+    phoenixTracerProvider = undefined;
+    spanProcessor = undefined;
+    logRecordProcessor = undefined;
+    metricReader = undefined;
   }
 }

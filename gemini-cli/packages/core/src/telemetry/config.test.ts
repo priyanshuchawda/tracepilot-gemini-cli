@@ -132,6 +132,34 @@ describe('telemetry/config helpers', () => {
       expect(resolved.useCliAuth).toBe(true);
     });
 
+    it('enables telemetry and traces when Phoenix is configured', async () => {
+      const resolved = await resolveTelemetrySettings({
+        env: {
+          PHOENIX_API_KEY: 'phx_test',
+          PHOENIX_BASE_URL: 'https://app.phoenix.arize.com/s/test-space',
+        },
+      });
+
+      expect(resolved.enabled).toBe(true);
+      expect(resolved.traces).toBe(true);
+    });
+
+    it('keeps explicit telemetry disabled when Phoenix is configured', async () => {
+      const resolved = await resolveTelemetrySettings({
+        settings: {
+          enabled: false,
+          traces: false,
+        },
+        env: {
+          PHOENIX_API_KEY: 'phx_test',
+          PHOENIX_BASE_URL: 'https://app.phoenix.arize.com/s/test-space',
+        },
+      });
+
+      expect(resolved.enabled).toBe(false);
+      expect(resolved.traces).toBe(false);
+    });
+
     it('resolves useCliAuth from env', async () => {
       const env = {
         GEMINI_TELEMETRY_USE_CLI_AUTH: 'true',

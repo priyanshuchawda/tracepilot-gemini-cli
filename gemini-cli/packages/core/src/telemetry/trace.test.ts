@@ -15,6 +15,8 @@ import {
   GEN_AI_INPUT_MESSAGES,
   GEN_AI_OPERATION_NAME,
   GEN_AI_OUTPUT_MESSAGES,
+  OPENINFERENCE_SPAN_KIND,
+  OpenInferenceSpanKind,
   GeminiCliOperation,
   SERVICE_DESCRIPTION,
   SERVICE_NAME,
@@ -130,6 +132,7 @@ describe('runInDevTraceSpan', () => {
       {
         attributes: {
           [GEN_AI_CONVERSATION_ID]: 'test-session-id',
+          [OPENINFERENCE_SPAN_KIND]: OpenInferenceSpanKind.Llm,
         },
       },
       expect.any(Function),
@@ -154,7 +157,36 @@ describe('runInDevTraceSpan', () => {
         expect(metadata.attributes[GEN_AI_CONVERSATION_ID]).toBe(
           'test-session-id',
         );
+        expect(metadata.attributes[OPENINFERENCE_SPAN_KIND]).toBe(
+          OpenInferenceSpanKind.Llm,
+        );
       },
+    );
+  });
+
+  it('should classify tool spans with OpenInference TOOL kind', async () => {
+    await runInDevTraceSpan(
+      {
+        operation: GeminiCliOperation.ToolCall,
+        sessionId: 'test-session-id',
+        tracesEnabled: true,
+      },
+      async ({ metadata }) => {
+        expect(metadata.attributes[OPENINFERENCE_SPAN_KIND]).toBe(
+          OpenInferenceSpanKind.Tool,
+        );
+      },
+    );
+
+    expect(mockTracer.startActiveSpan).toHaveBeenCalledWith(
+      GeminiCliOperation.ToolCall,
+      {
+        attributes: {
+          [GEN_AI_CONVERSATION_ID]: 'test-session-id',
+          [OPENINFERENCE_SPAN_KIND]: OpenInferenceSpanKind.Tool,
+        },
+      },
+      expect.any(Function),
     );
   });
 

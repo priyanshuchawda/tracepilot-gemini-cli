@@ -10,7 +10,9 @@ import {
   initializeTelemetry,
   shutdownTelemetry,
   bufferTelemetryEvent,
+  flushTelemetry,
 } from './sdk.js';
+import { register as registerPhoenix } from '@arizeai/phoenix-otel';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-grpc';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-grpc';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-grpc';
@@ -43,6 +45,12 @@ vi.mock('@opentelemetry/sdk-trace-node');
 vi.mock('@opentelemetry/sdk-node');
 vi.mock('./gcp-exporters.js');
 vi.mock('google-auth-library');
+vi.mock('@arizeai/phoenix-otel', () => ({
+  register: vi.fn(() => ({
+    forceFlush: vi.fn(async () => undefined),
+    shutdown: vi.fn(async () => undefined),
+  })),
+}));
 vi.mock('../utils/debugLogger.js', () => ({
   debugLogger: {
     log: vi.fn(),
@@ -83,6 +91,7 @@ describe('Telemetry SDK', () => {
 
   afterEach(async () => {
     await shutdownTelemetry(mockConfig);
+    vi.unstubAllEnvs();
   });
 
   it('should use gRPC exporters when protocol is grpc', async () => {
@@ -122,6 +131,45 @@ describe('Telemetry SDK', () => {
       url: 'http://localhost:4318/v1/metrics',
     });
     expect(NodeSDK.prototype.start).toHaveBeenCalled();
+  });
+
+  it('should register Phoenix tracing when Phoenix env is configured', async () => {
+    vi.stubEnv('PHOENIX_API_KEY', 'phx_test');
+    vi.stubEnv(
+      'PHOENIX_BASE_URL',
+      'https://app.phoenix.arize.com/s/test-space',
+    );
+    vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');
+
+    await initializeTelemetry(mockConfig);
+
+    expect(registerPhoenix).toHaveBeenCalledWith({
+      projectName: 'tracepilot-test',
+      url: 'https://app.phoenix.arize.com/s/test-space',
+      apiKey: 'phx_test',
+      instrumentations: [expect.any(Object)],
+    });
+    expect(NodeSDK.prototype.start).not.toHaveBeenCalled();
+  });
+
+  it('should flush Phoenix tracing when Phoenix provider is active', async () => {
+    vi.stubEnv('PHOENIX_API_KEY', 'phx_test');
+    vi.stubEnv(
+      'PHOENIX_COLLECTOR_ENDPOINT',
+      'https://app.phoenix.arize.com/s/test-space/v1/traces',
+    );
+    const provider = {
+      forceFlush: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
+    };
+    vi.mocked(registerPhoenix).mockReturnValueOnce(
+      provider as unknown as ReturnType<typeof registerPhoenix>,
+    );
+
+    await initializeTelemetry(mockConfig);
+    await flushTelemetry(mockConfig);
+
+    expect(provider.forceFlush).toHaveBeenCalled();
   });
 
   it('should parse gRPC endpoint correctly', async () => {

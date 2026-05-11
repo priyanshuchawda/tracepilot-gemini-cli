@@ -324,8 +324,8 @@ export default tseslint.config(
   },
   {
     files: [
-      './scripts/**/*.js',
-      'packages/*/scripts/**/*.js',
+      './scripts/**/*.{js,mjs}',
+      'packages/*/scripts/**/*.{js,mjs}',
       'esbuild.config.js',
       'packages/core/scripts/**/*.{js,mjs}',
     ],
