@@ -18,6 +18,31 @@ interface IDevTools {
   getPort(): number;
 }
 
+function isDevToolsModule(
+  value: unknown,
+): value is { DevTools: { getInstance(): IDevTools } } {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  if (!('DevTools' in value)) {
+    return false;
+  }
+
+  const devTools = (value as { DevTools: unknown }).DevTools;
+  if (typeof devTools !== 'object' || devTools === null) {
+    return false;
+  }
+
+  if (!('getInstance' in devTools)) {
+    return false;
+  }
+
+  return (
+    typeof (devTools as { getInstance: unknown }).getInstance === 'function'
+  );
+}
+
 const DEFAULT_DEVTOOLS_PORT = 25417;
 const DEFAULT_DEVTOOLS_HOST = '127.0.0.1';
 const MAX_PROMOTION_ATTEMPTS = 3;
@@ -60,8 +85,14 @@ async function startOrJoinDevTools(
   defaultHost: string,
   defaultPort: number,
 ): Promise<{ host: string; port: number }> {
-  const mod = await import('@google/gemini-cli-devtools');
-  const devtools: IDevTools = mod.DevTools.getInstance();
+  const importedModule: unknown = await import('@google/gemini-cli-devtools');
+  if (!isDevToolsModule(importedModule)) {
+    throw new Error(
+      'Invalid @google/gemini-cli-devtools module shape: missing DevTools.getInstance()',
+    );
+  }
+
+  const devtools = importedModule.DevTools.getInstance();
   const url = await devtools.start();
   const actualPort = devtools.getPort();
 

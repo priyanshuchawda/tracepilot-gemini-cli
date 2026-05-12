@@ -289,6 +289,13 @@ async function getGpuInfo(): Promise<string> {
   return cachedGpuInfo ?? NO_GPU;
 }
 
+function normalizeGeneratedMetadataValue(
+  value: unknown,
+  fallback: string,
+): string {
+  return typeof value === 'string' && value.length > 0 ? value : fallback;
+}
+
 // Singleton class for batch posting log events to Clearcut. When a new event comes in, the elapsed time
 // is checked and events are flushed to Clearcut if at least a minute has passed since the last flush.
 export class ClearcutLogger {
@@ -432,11 +439,11 @@ export class ClearcutLogger {
       },
       {
         gemini_cli_key: EventMetadataKey.GEMINI_CLI_VERSION,
-        value: CLI_VERSION,
+        value: normalizeGeneratedMetadataValue(CLI_VERSION, 'UNKNOWN'),
       },
       {
         gemini_cli_key: EventMetadataKey.GEMINI_CLI_GIT_COMMIT_HASH,
-        value: GIT_COMMIT_INFO,
+        value: normalizeGeneratedMetadataValue(GIT_COMMIT_INFO, 'N/A'),
       },
       {
         gemini_cli_key: EventMetadataKey.GEMINI_CLI_OS,
