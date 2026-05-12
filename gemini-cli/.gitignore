@@ -46,6 +46,10 @@ packages/*/coverage/
 # Generated files
 packages/cli/src/generated/
 packages/core/src/generated/
+!packages/cli/src/generated/
+!packages/cli/src/generated/git-commit.ts
+!packages/core/src/generated/
+!packages/core/src/generated/git-commit.ts
 packages/devtools/src/_client-assets.ts
 .integration-tests/
 .perf-tests/
