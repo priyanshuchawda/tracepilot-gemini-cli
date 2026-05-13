@@ -70,6 +70,8 @@
     "telemetry": "node scripts/telemetry.js",
     "smoke:phoenix": "node scripts/phoenix-smoke.mjs",
     "smoke:phoenix:mcp": "node scripts/phoenix-mcp-smoke.mjs",
+    "test:tracepilot": "vitest run --coverage=false packages/core/src/telemetry/phoenixSelfIntrospection.test.ts packages/core/src/tracepilot/repairPlanner.test.ts packages/core/src/tracepilot/evals.test.ts packages/core/src/policy/tracepilot-command-risk.test.ts packages/core/src/policy/shell-safety.test.ts && npm run test:scripts",
+    "ci:tracepilot": "node scripts/tracepilot-ci.mjs",
     "eval:tracepilot": "tsx scripts/tracepilot-evals.ts",
     "demo:broken-node-app": "tsx scripts/demo-broken-node-app.ts",
     "demo:broken-node-app:offline": "tsx scripts/demo-broken-node-app.ts --allow-missing-phoenix",

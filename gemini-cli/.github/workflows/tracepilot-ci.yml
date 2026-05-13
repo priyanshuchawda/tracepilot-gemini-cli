@@ -1,0 +1,57 @@
+name: 'TracePilot CI'
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release/**'
+  pull_request:
+    branches:
+      - 'main'
+      - 'release/**'
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: 'read'
+
+defaults:
+  run:
+    shell: 'bash'
+
+jobs:
+  tracepilot:
+    name: 'TracePilot partitioned gates'
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 45
+    env:
+      PHOENIX_API_KEY: '${{ secrets.PHOENIX_API_KEY }}'
+      PHOENIX_HOST: '${{ secrets.PHOENIX_HOST }}'
+      PHOENIX_BASE_URL: '${{ secrets.PHOENIX_BASE_URL }}'
+      PHOENIX_COLLECTOR_ENDPOINT: '${{ secrets.PHOENIX_COLLECTOR_ENDPOINT }}'
+      PHOENIX_PROJECT: '${{ vars.PHOENIX_PROJECT || secrets.PHOENIX_PROJECT }}'
+    steps:
+      - name: 'Checkout'
+        uses: 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8'
+        with:
+          fetch-depth: 1
+
+      - name: 'Set up Node.js'
+        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020'
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: 'Install dependencies'
+        run: 'npm ci'
+
+      - name: 'Run TracePilot local CI'
+        run: 'npm run ci:tracepilot'
+
+      - name: 'Upload TracePilot logs'
+        if: '${{ always() }}'
+        uses: 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
+        with:
+          name: 'tracepilot-ci-logs'
+          path: '.ai-logs/tracepilot-ci'
+          if-no-files-found: 'ignore'
