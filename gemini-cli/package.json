@@ -72,6 +72,7 @@
     "smoke:phoenix:mcp": "node scripts/phoenix-mcp-smoke.mjs",
     "start:tracepilot-cloud-run": "node scripts/tracepilot-cloud-run-server.mjs",
     "deploy:tracepilot-cloud-run": "node scripts/tracepilot-cloud-run-deploy.mjs",
+    "secrets:tracepilot-cloud-run": "node scripts/tracepilot-secret-manager-sync.mjs",
     "smoke:cloud-run": "node scripts/tracepilot-cloud-run-smoke.mjs",
     "smoke:cloud-run:local": "node scripts/tracepilot-cloud-run-smoke.mjs",
     "test:tracepilot": "vitest run --coverage=false packages/core/src/telemetry/phoenixSelfIntrospection.test.ts packages/core/src/tracepilot/repairPlanner.test.ts packages/core/src/tracepilot/evals.test.ts packages/core/src/policy/tracepilot-command-risk.test.ts packages/core/src/policy/shell-safety.test.ts && npm run test:scripts",

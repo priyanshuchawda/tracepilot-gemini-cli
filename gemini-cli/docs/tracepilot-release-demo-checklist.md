@@ -65,7 +65,9 @@ Expected result:
 Use the Cloud Run status surface as the stable hosted project URL:
 
 ```bash
-npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --region asia-south1 --service tracepilot-url-proof
+npm run secrets:tracepilot-cloud-run -- --dry-run --project priyanshu-portfolio-458519
+npm run secrets:tracepilot-cloud-run -- --project priyanshu-portfolio-458519
+npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --region asia-south1 --service tracepilot-url-proof --secret GEMINI_API_KEY=GEMINI_API_KEY --secret PHOENIX_API_KEY=PHOENIX_API_KEY
 npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"
 ```
 

@@ -7,6 +7,9 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import dotenv from 'dotenv';
+
+dotenv.config({ quiet: true });
 
 const execFileAsync = promisify(execFile);
 const GCLOUD = 'gcloud';
@@ -28,6 +31,29 @@ const commonRunArgs = [
   options.region,
   '--quiet',
 ];
+const deployArgs = buildDeployArgs(options, image, commonRunArgs);
+
+if (options.dryRun) {
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        dryRun: true,
+        project,
+        region: options.region,
+        service: options.service,
+        image,
+        demoRunsEnabled: options.enableDemoRuns === 'true',
+        secretsConfigured: Object.keys(options.secrets),
+        envConfigured: Object.keys(options.envVars),
+        deployArgs: redactArgs(deployArgs),
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
+}
 
 await run(GCLOUD, [
   'services',
@@ -79,33 +105,6 @@ await run(GCLOUD, [
   '.',
 ]);
 
-const deployArgs = [
-  'run',
-  'deploy',
-  options.service,
-  '--image',
-  image,
-  '--allow-unauthenticated',
-  '--min-instances',
-  '0',
-  '--max-instances',
-  '1',
-  '--cpu',
-  '1',
-  '--memory',
-  '1Gi',
-  '--timeout',
-  '300',
-  '--port',
-  '8080',
-  '--set-env-vars',
-  `PHOENIX_PROJECT=${options.phoenixProject},TRACEPILOT_ENABLE_DEMO_RUNS=${options.enableDemoRuns}`,
-  ...commonRunArgs,
-];
-for (const [envName, secretName] of Object.entries(options.secrets)) {
-  deployArgs.push('--set-secrets', `${envName}=${secretName}:latest`);
-}
-
 await run(GCLOUD, deployArgs);
 
 const serviceUrl = (
@@ -131,6 +130,7 @@ console.log(
       url: serviceUrl,
       demoRunsEnabled: options.enableDemoRuns === 'true',
       secretsConfigured: Object.keys(options.secrets),
+      envConfigured: Object.keys(options.envVars),
     },
     null,
     2,
@@ -145,13 +145,29 @@ function parseArgs(args) {
     tag: process.env.GITHUB_SHA || `manual-${Date.now()}`,
     phoenixProject: process.env.PHOENIX_PROJECT || 'tracepilot-gemini-cli',
     enableDemoRuns: 'false',
+    dryRun: false,
+    envVars: {
+      PHOENIX_PROJECT: process.env.PHOENIX_PROJECT || 'tracepilot-gemini-cli',
+      TRACEPILOT_ENABLE_DEMO_RUNS: 'false',
+    },
     secrets: {},
   };
+  for (const [name, value] of [
+    ['PHOENIX_HOST', process.env.PHOENIX_HOST],
+    ['PHOENIX_BASE_URL', process.env.PHOENIX_BASE_URL],
+    ['PHOENIX_COLLECTOR_ENDPOINT', process.env.PHOENIX_COLLECTOR_ENDPOINT],
+  ]) {
+    if (value) {
+      parsed.envVars[name] = value;
+    }
+  }
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === '--project') {
       parsed.project = args[++index];
+    } else if (arg === '--dry-run') {
+      parsed.dryRun = true;
     } else if (arg === '--region') {
       parsed.region = args[++index] ?? parsed.region;
     } else if (arg === '--repository') {
@@ -162,8 +178,23 @@ function parseArgs(args) {
       parsed.tag = args[++index] ?? parsed.tag;
     } else if (arg === '--phoenix-project') {
       parsed.phoenixProject = args[++index] ?? parsed.phoenixProject;
+      parsed.envVars.PHOENIX_PROJECT = parsed.phoenixProject;
+    } else if (arg === '--phoenix-host') {
+      parsed.envVars.PHOENIX_HOST = args[++index] ?? '';
+    } else if (arg === '--phoenix-base-url') {
+      parsed.envVars.PHOENIX_BASE_URL = args[++index] ?? '';
+    } else if (arg === '--phoenix-collector-endpoint') {
+      parsed.envVars.PHOENIX_COLLECTOR_ENDPOINT = args[++index] ?? '';
+    } else if (arg === '--set-env') {
+      const [envName, ...valueParts] = String(args[++index] ?? '').split('=');
+      const value = valueParts.join('=');
+      if (!envName || !value) {
+        fail('--set-env must use ENV_NAME=value');
+      }
+      parsed.envVars[envName] = value;
     } else if (arg === '--enable-demo-runs') {
       parsed.enableDemoRuns = 'true';
+      parsed.envVars.TRACEPILOT_ENABLE_DEMO_RUNS = 'true';
     } else if (arg === '--secret') {
       const [envName, secretName] = String(args[++index] ?? '').split('=');
       if (!envName || !secretName) {
@@ -174,6 +205,43 @@ function parseArgs(args) {
   }
 
   return parsed;
+}
+
+function buildDeployArgs(options, image, commonRunArgs) {
+  const deployArgs = [
+    'run',
+    'deploy',
+    options.service,
+    '--image',
+    image,
+    '--allow-unauthenticated',
+    '--min-instances',
+    '0',
+    '--max-instances',
+    '1',
+    '--cpu',
+    '1',
+    '--memory',
+    '1Gi',
+    '--timeout',
+    '300',
+    '--port',
+    '8080',
+    '--set-env-vars',
+    serializeEnvVars(options.envVars),
+    ...commonRunArgs,
+  ];
+  for (const [envName, secretName] of Object.entries(options.secrets)) {
+    deployArgs.push('--set-secrets', `${envName}=${secretName}:latest`);
+  }
+  return deployArgs;
+}
+
+function serializeEnvVars(envVars) {
+  return Object.entries(envVars)
+    .filter(([, value]) => typeof value === 'string' && value.length > 0)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(',');
 }
 
 async function getGcloudProject() {
@@ -247,6 +315,12 @@ function redactArgs(args) {
   return args.map((arg) =>
     String(arg)
       .replace(/PHOENIX_PROJECT=[^,\s]+/g, 'PHOENIX_PROJECT=[VALUE]')
+      .replace(/PHOENIX_HOST=[^,\s]+/g, 'PHOENIX_HOST=[VALUE]')
+      .replace(/PHOENIX_BASE_URL=[^,\s]+/g, 'PHOENIX_BASE_URL=[VALUE]')
+      .replace(
+        /PHOENIX_COLLECTOR_ENDPOINT=[^,\s]+/g,
+        'PHOENIX_COLLECTOR_ENDPOINT=[VALUE]',
+      )
       .replace(/=AIza[0-9A-Za-z_-]{20,}/g, '=[REDACTED]')
       .replace(/=sk-[A-Za-z0-9_-]{16,}/g, '=[REDACTED]'),
   );
