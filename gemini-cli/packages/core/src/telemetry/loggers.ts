@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { logs, type LogRecord } from '@opentelemetry/api-logs';
+import {
+  logs,
+  type LogAttributes,
+  type Logger,
+  type LogRecord,
+} from '@opentelemetry/api-logs';
 import type { Config } from '../config/config.js';
 import { SERVICE_NAME } from './constants.js';
 import {
@@ -99,6 +104,59 @@ import {
   EmptyWalletMenuShownEvent,
   CreditPurchaseClickEvent,
 } from './billingEvents.js';
+import {
+  REDACTION_APPLIED_ATTRIBUTE,
+  redactSensitiveText,
+} from './sanitize.js';
+
+function sanitizeLogAttributeValue(value: LogAttributes[string]): {
+  value: LogAttributes[string];
+  redacted: boolean;
+} {
+  if (typeof value === 'string') {
+    return redactSensitiveText(value);
+  }
+  if (Array.isArray(value)) {
+    let redacted = false;
+    const sanitized = value.map((entry) => {
+      if (typeof entry !== 'string') {
+        return entry;
+      }
+      const result = redactSensitiveText(entry);
+      redacted ||= result.redacted;
+      return result.value;
+    });
+    return { value: sanitized, redacted };
+  }
+  return { value, redacted: false };
+}
+
+function sanitizeLogAttributes(
+  attributes: LogAttributes | undefined,
+): LogAttributes | undefined {
+  if (!attributes) {
+    return attributes;
+  }
+
+  let redactionApplied = false;
+  const sanitized: LogAttributes = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    const result = sanitizeLogAttributeValue(value);
+    sanitized[key] = result.value;
+    redactionApplied ||= result.redacted;
+  }
+  if (redactionApplied) {
+    sanitized[REDACTION_APPLIED_ATTRIBUTE] = true;
+  }
+  return sanitized;
+}
+
+function emitSanitizedLogRecord(logger: Logger, logRecord: LogRecord): void {
+  logger.emit({
+    ...logRecord,
+    attributes: sanitizeLogAttributes(logRecord.attributes),
+  });
+}
 
 export function logCliConfiguration(
   config: Config,
@@ -115,7 +173,7 @@ export function logCliConfiguration(
           body: event.toLogBody(),
           attributes: event.toOpenTelemetryAttributes(config),
         };
-        logger.emit(logRecord);
+        emitSanitizedLogRecord(logger, logRecord);
       })
       .catch((e: unknown) => {
         debugLogger.error('Failed to log telemetry event', e);
@@ -132,7 +190,7 @@ export function logUserPrompt(config: Config, event: UserPromptEvent): void {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -152,7 +210,7 @@ export function logToolCall(config: Config, event: ToolCallEvent): void {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordToolCallMetrics(config, event.duration_ms, {
       function_name: event.function_name,
       success: event.success,
@@ -190,7 +248,7 @@ export function logToolOutputTruncated(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -205,7 +263,7 @@ export function logToolOutputMasking(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -220,7 +278,7 @@ export function logFileOperation(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordFileOperationMetric(config, {
       operation: event.operation,
@@ -236,8 +294,8 @@ export function logApiRequest(config: Config, event: ApiRequestEvent): void {
   ClearcutLogger.getInstance(config)?.logApiRequestEvent(event);
   bufferTelemetryEvent(() => {
     const logger = logs.getLogger(SERVICE_NAME);
-    logger.emit(event.toLogRecord(config));
-    logger.emit(event.toSemanticLogRecord(config));
+    emitSanitizedLogRecord(logger, event.toLogRecord(config));
+    emitSanitizedLogRecord(logger, event.toSemanticLogRecord(config));
   });
 }
 
@@ -252,7 +310,7 @@ export function logFlashFallback(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -267,7 +325,7 @@ export function logRipgrepFallback(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -283,8 +341,8 @@ export function logApiError(config: Config, event: ApiErrorEvent): void {
   ClearcutLogger.getInstance(config)?.logApiErrorEvent(event);
   bufferTelemetryEvent(() => {
     const logger = logs.getLogger(SERVICE_NAME);
-    logger.emit(event.toLogRecord(config));
-    logger.emit(event.toSemanticLogRecord(config));
+    emitSanitizedLogRecord(logger, event.toLogRecord(config));
+    emitSanitizedLogRecord(logger, event.toSemanticLogRecord(config));
 
     recordApiErrorMetrics(config, event.duration_ms, {
       model: event.model,
@@ -316,8 +374,8 @@ export function logApiResponse(config: Config, event: ApiResponseEvent): void {
   ClearcutLogger.getInstance(config)?.logApiResponseEvent(event);
   bufferTelemetryEvent(() => {
     const logger = logs.getLogger(SERVICE_NAME);
-    logger.emit(event.toLogRecord(config));
-    logger.emit(event.toSemanticLogRecord(config));
+    emitSanitizedLogRecord(logger, event.toLogRecord(config));
+    emitSanitizedLogRecord(logger, event.toSemanticLogRecord(config));
 
     const conventionAttributes = getConventionAttributes(event);
 
@@ -356,7 +414,7 @@ export function logLoopDetected(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -371,7 +429,7 @@ export function logLoopDetectionDisabled(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -386,7 +444,7 @@ export function logNextSpeakerCheck(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -401,7 +459,7 @@ export function logSlashCommand(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -421,7 +479,7 @@ export function logRewind(config: Config, event: RewindEvent): void {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -436,7 +494,7 @@ export function logIdeConnection(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -451,7 +509,7 @@ export function logConversationFinishedEvent(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -466,7 +524,7 @@ export function logChatCompression(
     body: event.toLogBody(),
     attributes: event.toOpenTelemetryAttributes(config),
   };
-  logger.emit(logRecord);
+  emitSanitizedLogRecord(logger, logRecord);
 
   recordChatCompressionMetrics(config, {
     tokens_before: event.tokens_before,
@@ -485,7 +543,7 @@ export function logMalformedJsonResponse(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -500,7 +558,7 @@ export function logInvalidChunk(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordInvalidChunk(config);
   });
 }
@@ -516,7 +574,7 @@ export function logNetworkRetryAttempt(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordRetryAttemptMetrics(config, {
       model: event.model,
       attempt: event.attempt,
@@ -535,7 +593,7 @@ export function logContentRetry(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordContentRetry(config);
   });
 }
@@ -551,7 +609,7 @@ export function logContentRetryFailure(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordContentRetryFailure(config);
   });
 }
@@ -567,7 +625,7 @@ export function logModelRouting(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordModelRoutingMetrics(config, event);
   });
 }
@@ -583,7 +641,7 @@ export function logModelSlashCommand(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
     recordModelSlashCommand(config, event);
   });
 }
@@ -599,7 +657,7 @@ export async function logExtensionInstallEvent(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -614,7 +672,7 @@ export async function logExtensionUninstall(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -629,7 +687,7 @@ export async function logExtensionUpdateEvent(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -644,7 +702,7 @@ export async function logExtensionEnable(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -659,7 +717,7 @@ export async function logExtensionDisable(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -674,7 +732,7 @@ export function logEditStrategy(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -689,7 +747,7 @@ export function logEditCorrectionEvent(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -701,7 +759,7 @@ export function logAgentStart(config: Config, event: AgentStartEvent): void {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -713,7 +771,7 @@ export function logAgentFinish(config: Config, event: AgentFinishEvent): void {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordAgentRunMetrics(config, event);
   });
@@ -730,7 +788,7 @@ export function logRecoveryAttempt(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordRecoveryAttemptMetrics(config, event);
   });
@@ -747,7 +805,7 @@ export function logWebFetchFallbackAttempt(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -762,7 +820,7 @@ export function logLlmLoopCheck(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 }
 
@@ -772,7 +830,7 @@ export function logApprovalModeSwitch(
 ) {
   ClearcutLogger.getInstance(config)?.logApprovalModeSwitchEvent(event);
   bufferTelemetryEvent(() => {
-    logs.getLogger(SERVICE_NAME).emit({
+    emitSanitizedLogRecord(logs.getLogger(SERVICE_NAME), {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     });
@@ -785,7 +843,7 @@ export function logApprovalModeDuration(
 ) {
   ClearcutLogger.getInstance(config)?.logApprovalModeDurationEvent(event);
   bufferTelemetryEvent(() => {
-    logs.getLogger(SERVICE_NAME).emit({
+    emitSanitizedLogRecord(logs.getLogger(SERVICE_NAME), {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     });
@@ -795,7 +853,7 @@ export function logApprovalModeDuration(
 export function logPlanExecution(config: Config, event: PlanExecutionEvent) {
   ClearcutLogger.getInstance(config)?.logPlanExecutionEvent(event);
   bufferTelemetryEvent(() => {
-    logs.getLogger(SERVICE_NAME).emit({
+    emitSanitizedLogRecord(logs.getLogger(SERVICE_NAME), {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     });
@@ -814,7 +872,7 @@ export function logHookCall(config: Config, event: HookCallEvent): void {
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordHookCallMetrics(
       config,
@@ -841,7 +899,7 @@ export function logStartupStats(
           body: event.toLogBody(),
           attributes: event.toOpenTelemetryAttributes(config),
         };
-        logger.emit(logRecord);
+        emitSanitizedLogRecord(logger, logRecord);
       })
       .catch((e: unknown) => {
         debugLogger.error('Failed to log telemetry event', e);
@@ -860,7 +918,7 @@ export function logKeychainAvailability(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordKeychainAvailability(config, event);
   });
@@ -877,7 +935,7 @@ export function logTokenStorageInitialization(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordTokenStorageInitialization(config, event);
   });
@@ -894,7 +952,7 @@ export function logOnboardingStart(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordOnboardingStart(config);
   });
@@ -911,7 +969,7 @@ export function logOnboardingSuccess(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
 
     recordOnboardingSuccess(config, event.userTier, event.duration_ms);
   });
@@ -927,7 +985,7 @@ export function logBillingEvent(
       body: event.toLogBody(),
       attributes: event.toOpenTelemetryAttributes(config),
     };
-    logger.emit(logRecord);
+    emitSanitizedLogRecord(logger, logRecord);
   });
 
   const cc = ClearcutLogger.getInstance(config);

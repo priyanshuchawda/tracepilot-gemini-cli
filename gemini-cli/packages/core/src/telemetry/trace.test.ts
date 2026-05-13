@@ -26,6 +26,7 @@ import {
   spanRegistry,
   truncateForTelemetry,
 } from './trace.js';
+import { REDACTION_APPLIED_ATTRIBUTE } from './sanitize.js';
 
 vi.mock('@opentelemetry/api', async (importOriginal) => {
   const original = await importOriginal();
@@ -217,6 +218,37 @@ describe('runInDevTraceSpan', () => {
       code: SpanStatusCode.OK,
     });
     expect(mockSpan.end).toHaveBeenCalled();
+  });
+
+  it('should redact secrets from span inputs, outputs, and attributes', async () => {
+    await runInDevTraceSpan(
+      {
+        operation: GeminiCliOperation.ToolCall,
+        sessionId: 'test-session-id',
+        tracesEnabled: true,
+      },
+      async ({ metadata }) => {
+        metadata.input = {
+          command: 'echo Authorization: Bearer abc.def.ghi',
+        };
+        metadata.output = {
+          stdout: 'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
+        };
+        metadata.attributes['tool.secret'] =
+          'GEMINI_API_KEY=AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMY12';
+      },
+    );
+
+    const setAttributeCalls = mockSpan.setAttribute.mock.calls;
+    const serializedAttributes = JSON.stringify(setAttributeCalls);
+
+    expect(serializedAttributes).not.toContain('abc.def.ghi');
+    expect(serializedAttributes).not.toContain('sk-proj-dummy');
+    expect(serializedAttributes).not.toContain('AIzaSyDUMMY');
+    expect(mockSpan.setAttribute).toHaveBeenCalledWith(
+      REDACTION_APPLIED_ATTRIBUTE,
+      true,
+    );
   });
 
   it('should handle errors in the wrapped function', async () => {

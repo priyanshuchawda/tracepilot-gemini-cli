@@ -16,6 +16,10 @@ import { debugLogger } from '../utils/debugLogger.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
 import { truncateString } from '../utils/textUtils.js';
 import {
+  REDACTION_APPLIED_ATTRIBUTE,
+  redactSensitiveText,
+} from './sanitize.js';
+import {
   GEN_AI_AGENT_DESCRIPTION,
   GEN_AI_AGENT_NAME,
   GEN_AI_CONVERSATION_ID,
@@ -59,25 +63,36 @@ export function truncateForTelemetry(
   value: unknown,
   maxLength = 10000,
 ): AttributeValue | undefined {
+  return sanitizeForTelemetry(value, maxLength).value;
+}
+
+function sanitizeForTelemetry(
+  value: unknown,
+  maxLength = 10000,
+): { value: AttributeValue | undefined; redacted: boolean } {
   if (typeof value === 'string') {
-    return truncateString(
-      value,
+    const redacted = redactSensitiveText(value);
+    const truncated = truncateString(
+      redacted.value,
       maxLength,
       `...[TRUNCATED: original length ${value.length}]`,
     ) as AttributeValue;
+    return { value: truncated, redacted: redacted.redacted };
   }
   if (typeof value === 'object' && value !== null) {
     const stringified = safeJsonStringify(value);
-    return truncateString(
-      stringified,
+    const redacted = redactSensitiveText(stringified);
+    const truncated = truncateString(
+      redacted.value,
       maxLength,
       `...[TRUNCATED: original length ${stringified.length}]`,
     ) as AttributeValue;
+    return { value: truncated, redacted: redacted.redacted };
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
-    return value as AttributeValue;
+    return { value: value as AttributeValue, redacted: false };
   }
-  return undefined;
+  return { value: undefined, redacted: false };
 }
 
 function isAsyncIterable<T>(value: T): value is T & AsyncIterable<unknown> {
@@ -179,26 +194,26 @@ export async function runInDevTraceSpan<R>(
       }
       spanEnded = true;
       try {
+        let redactionApplied = false;
+        const setSanitizedAttribute = (key: string, value: unknown) => {
+          const sanitized = sanitizeForTelemetry(value);
+          redactionApplied ||= sanitized.redacted;
+          if (sanitized.value !== undefined) {
+            span.setAttribute(key, sanitized.value);
+          }
+        };
+
         if (tracesEnabled) {
           if (logPrompts !== false) {
             if (meta.input !== undefined) {
-              const truncated = truncateForTelemetry(meta.input);
-              if (truncated !== undefined) {
-                span.setAttribute(GEN_AI_INPUT_MESSAGES, truncated);
-              }
+              setSanitizedAttribute(GEN_AI_INPUT_MESSAGES, meta.input);
             }
             if (meta.output !== undefined) {
-              const truncated = truncateForTelemetry(meta.output);
-              if (truncated !== undefined) {
-                span.setAttribute(GEN_AI_OUTPUT_MESSAGES, truncated);
-              }
+              setSanitizedAttribute(GEN_AI_OUTPUT_MESSAGES, meta.output);
             }
           }
           for (const [key, value] of Object.entries(meta.attributes)) {
-            const truncated = truncateForTelemetry(value);
-            if (truncated !== undefined) {
-              span.setAttribute(key, truncated);
-            }
+            setSanitizedAttribute(key, value);
           }
         } else {
           // Add basic attributes even when traces are disabled
@@ -210,12 +225,12 @@ export async function runInDevTraceSpan<R>(
               key === GEN_AI_CONVERSATION_ID ||
               key === OPENINFERENCE_SPAN_KIND
             ) {
-              const truncated = truncateForTelemetry(value);
-              if (truncated !== undefined) {
-                span.setAttribute(key, truncated);
-              }
+              setSanitizedAttribute(key, value);
             }
           }
+        }
+        if (redactionApplied) {
+          span.setAttribute(REDACTION_APPLIED_ATTRIBUTE, true);
         }
         if (meta.error) {
           span.setStatus({

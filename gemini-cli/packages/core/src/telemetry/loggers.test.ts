@@ -124,6 +124,7 @@ import { ClearcutLogger } from './clearcut-logger/clearcut-logger.js';
 import { UserAccountManager } from '../utils/userAccountManager.js';
 import { InstallationManager } from '../utils/installationManager.js';
 import { AgentTerminateMode } from '../agents/types.js';
+import { REDACTION_APPLIED_ATTRIBUTE } from './sanitize.js';
 
 vi.mock('systeminformation', () => ({
   default: {
@@ -2017,6 +2018,58 @@ describe('loggers', () => {
       expect(emitted.attributes['function_args']).toBe(
         JSON.stringify({ command: 'echo visible' }, null, 2),
       );
+    });
+
+    it('should redact secrets from emitted OTEL log attributes', () => {
+      const mockConfigWithPrompts = {
+        getSessionId: () => 'test-session-id',
+        getTargetDir: () => 'target-dir',
+        getUsageStatisticsEnabled: () => true,
+        getTelemetryEnabled: () => true,
+        getTelemetryLogPromptsEnabled: () => true,
+        getTelemetryTracesEnabled: () => false,
+        isInteractive: () => false,
+        getExperiments: () => undefined,
+        getExperimentsAsync: async () => undefined,
+        getContentGeneratorConfig: () => undefined,
+      } as unknown as Config;
+
+      const call: CompletedToolCall = {
+        status: CoreToolCallStatus.Success,
+        request: {
+          name: 'run_bash',
+          args: {
+            command: 'echo Authorization: Bearer abc.def.ghi',
+            env: 'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
+          },
+          callId: 'call-3',
+          isClientInitiated: false,
+          prompt_id: 'prompt-redaction',
+        },
+        response: {
+          callId: 'call-3',
+          responseParts: [],
+          resultDisplay: undefined,
+          error: undefined,
+          errorType: undefined,
+          contentLength: undefined,
+        },
+        tool: undefined as unknown as AnyDeclarativeTool,
+        invocation: {} as AnyToolInvocation,
+        durationMs: 50,
+      };
+      const event = new ToolCallEvent(call);
+      logToolCall(mockConfigWithPrompts, event);
+
+      const emitted = mockLogger.emit.mock.calls[0][0] as {
+        attributes: Record<string, unknown>;
+      };
+      const serialized = JSON.stringify(emitted.attributes);
+
+      expect(serialized).not.toContain('abc.def.ghi');
+      expect(serialized).not.toContain('sk-proj-dummy');
+      expect(serialized).toContain('[REDACTED]');
+      expect(emitted.attributes[REDACTION_APPLIED_ATTRIBUTE]).toBe(true);
     });
   });
 

@@ -16,6 +16,10 @@ import { describe, it, expect } from 'vitest';
 import { HookCallEvent, EVENT_HOOK_CALL } from './types.js';
 import { HookType } from '../hooks/types.js';
 import type { Config } from '../config/config.js';
+import {
+  createRedactedOutputPreview,
+  redactSensitiveText,
+} from './sanitize.js';
 
 /**
  * Create a mock config for testing.
@@ -37,6 +41,73 @@ function createMockConfig(logPromptsEnabled: boolean): Config {
 }
 
 describe('Telemetry Sanitization', () => {
+  describe('redactSensitiveText', () => {
+    it('redacts common secret patterns before telemetry export', () => {
+      const sensitive = [
+        'GEMINI_API_KEY=AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMY12',
+        'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
+        'GITHUB_TOKEN=ghp_dummyDummyDummyDummyDummyDummyDummy12',
+        'Authorization: Bearer abc.def.ghi',
+        'password="super-secret"',
+        'api_key: plain-secret',
+        'DATABASE_URL=postgres://user:pass@example.com/db',
+        [
+          '-----BEGIN PRIVATE KEY-----',
+          'private-key-material',
+          '-----END PRIVATE KEY-----',
+        ].join('\n'),
+      ].join('\n');
+
+      const result = redactSensitiveText(sensitive);
+
+      expect(result.redacted).toBe(true);
+      expect(result.value).not.toContain('AIzaSyDUMMY');
+      expect(result.value).not.toContain('sk-proj-dummy');
+      expect(result.value).not.toContain('ghp_dummy');
+      expect(result.value).not.toContain('abc.def.ghi');
+      expect(result.value).not.toContain('super-secret');
+      expect(result.value).not.toContain('plain-secret');
+      expect(result.value).not.toContain('postgres://user:pass');
+      expect(result.value).not.toContain('private-key-material');
+      expect(result.value).toContain('[REDACTED]');
+    });
+
+    it('leaves non-sensitive text unchanged', () => {
+      const text = 'tests failed with exit code 1';
+
+      expect(redactSensitiveText(text)).toEqual({
+        value: text,
+        redacted: false,
+      });
+    });
+  });
+
+  describe('createRedactedOutputPreview', () => {
+    it('returns a hash and bounded redacted preview without leaking secrets', () => {
+      const output = [
+        'first line',
+        'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
+        'middle'.repeat(100),
+        'Authorization: Bearer abc.def.ghi',
+        'last line',
+      ].join('\n');
+
+      const preview = createRedactedOutputPreview(output, {
+        headChars: 60,
+        tailChars: 60,
+      });
+
+      expect(preview.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(preview.originalLength).toBe(output.length);
+      expect(preview.truncated).toBe(true);
+      expect(preview.redacted).toBe(true);
+      expect(preview.preview).toContain('[REDACTED]');
+      expect(preview.preview).not.toContain('sk-proj-dummy');
+      expect(preview.preview).not.toContain('abc.def.ghi');
+      expect(preview.preview.length).toBeLessThanOrEqual(140);
+    });
+  });
+
   describe('HookCallEvent', () => {
     describe('constructor', () => {
       it('should create an event with all fields', () => {
