@@ -70,6 +70,7 @@
     "telemetry": "node scripts/telemetry.js",
     "smoke:phoenix": "node scripts/phoenix-smoke.mjs",
     "smoke:phoenix:mcp": "node scripts/phoenix-mcp-smoke.mjs",
+    "eval:tracepilot": "tsx scripts/tracepilot-evals.ts",
     "check:lockfile": "node scripts/check-lockfile.js",
     "clean": "node scripts/clean.js",
     "pre-commit": "node scripts/pre-commit.js"
