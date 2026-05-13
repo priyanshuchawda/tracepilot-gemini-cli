@@ -36,6 +36,10 @@ import { getToolSuggestion } from '../utils/tool-utils.js';
 import { runInDevTraceSpan } from '../telemetry/trace.js';
 import { logToolCall } from '../telemetry/loggers.js';
 import { ToolCallEvent } from '../telemetry/types.js';
+import {
+  buildTraceRepairEvidenceText,
+  queryPhoenixForFailedToolCall,
+} from '../telemetry/phoenixSelfIntrospection.js';
 import { populateToolDisplay } from '../agent/tool-display-utils.js';
 import type { EditorType } from '../utils/editor.js';
 import {
@@ -931,13 +935,66 @@ export class Scheduler {
         result.response,
       );
     } else {
-      this.state.updateStatus(
-        callId,
-        CoreToolCallStatus.Error,
-        result.response,
-      );
+      const response =
+        await this._addPhoenixSelfIntrospectionToErrorResponse(result);
+      this.state.updateStatus(callId, CoreToolCallStatus.Error, response);
     }
     return false;
+  }
+
+  private async _addPhoenixSelfIntrospectionToErrorResponse(
+    result: ErroredToolCall,
+  ): Promise<ToolCallResponseInfo> {
+    const introspection = await queryPhoenixForFailedToolCall(
+      this.config,
+      result,
+    );
+    const evidenceText = buildTraceRepairEvidenceText(introspection);
+    const request = result.request ?? {
+      callId: result.response.callId,
+      name: 'unknown',
+      originalRequestName: undefined,
+    };
+    const existingResponseParts = result.response.responseParts ?? [];
+    const responseParts =
+      existingResponseParts.length > 0
+        ? existingResponseParts.map((part, index) => {
+            if (index !== 0 || !part.functionResponse?.response) {
+              return part;
+            }
+            return {
+              ...part,
+              functionResponse: {
+                id: part.functionResponse.id,
+                name: part.functionResponse.name,
+                response: {
+                  ...part.functionResponse.response,
+                  tracepilot_self_introspection: evidenceText,
+                },
+              },
+            };
+          })
+        : [
+            {
+              functionResponse: {
+                id: request.callId,
+                name: request.originalRequestName ?? request.name,
+                response: {
+                  error: result.response.error?.message,
+                  tracepilot_self_introspection: evidenceText,
+                },
+              },
+            },
+          ];
+
+    return {
+      ...result.response,
+      responseParts,
+      data: {
+        ...result.response.data,
+        tracepilotSelfIntrospection: introspection,
+      },
+    };
   }
 
   private _processNextInRequestQueue() {
