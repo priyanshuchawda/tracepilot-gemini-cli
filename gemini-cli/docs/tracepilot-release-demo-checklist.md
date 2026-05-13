@@ -96,3 +96,7 @@ PHOENIX_BASE_URL=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
 PHOENIX_PROJECT=tracepilot-gemini-cli
 npm run smoke:phoenix:mcp
 ```
+
+If `PHOENIX_HOST` is not set, the smoke/demo scripts can derive the Phoenix MCP
+host from `PHOENIX_BASE_URL` or from a Phoenix Cloud-style
+`PHOENIX_COLLECTOR_ENDPOINT`.

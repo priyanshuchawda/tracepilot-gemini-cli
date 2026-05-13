@@ -227,7 +227,7 @@ async function recordFailureAndQueryPhoenix(
       visible: false,
       queryable: false,
       reason:
-        'Missing Phoenix env. Set PHOENIX_API_KEY, PHOENIX_PROJECT, PHOENIX_HOST, and PHOENIX_COLLECTOR_ENDPOINT or PHOENIX_BASE_URL.',
+        'Missing Phoenix env. Set PHOENIX_API_KEY, PHOENIX_PROJECT, and PHOENIX_HOST, PHOENIX_BASE_URL, or a Phoenix Cloud PHOENIX_COLLECTOR_ENDPOINT.',
     };
   }
 
@@ -382,18 +382,35 @@ async function queryPhoenixMcp(
 }
 
 function resolvePhoenixHost(): string | undefined {
-  const host = (
-    process.env['PHOENIX_HOST'] ??
-    process.env['PHOENIX_BASE_URL'] ??
-    ''
-  )
-    .trim()
-    .replace(/\/+$/, '');
-  if (!host || /YOUR_|your-|example/i.test(host)) {
+  for (const value of [
+    process.env['PHOENIX_HOST'],
+    process.env['PHOENIX_BASE_URL'],
+    process.env['PHOENIX_COLLECTOR_ENDPOINT'],
+  ]) {
+    const resolved = normalizePhoenixBaseUrl(value);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+function normalizePhoenixBaseUrl(
+  value: string | undefined,
+): string | undefined {
+  const trimmed = (value ?? '').trim().replace(/\/+$/, '');
+  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
     return undefined;
   }
   try {
-    return new URL(host).toString().replace(/\/+$/, '');
+    const url = new URL(trimmed);
+    url.search = '';
+    url.hash = '';
+    url.pathname = url.pathname
+      .replace(/\/+$/, '')
+      .replace(/\/v1\/traces$/i, '')
+      .replace(/\/v1$/i, '');
+    return url.toString().replace(/\/+$/, '');
   } catch {
     return undefined;
   }
