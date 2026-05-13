@@ -53,7 +53,7 @@ try {
   await initializeTelemetry(config);
   await runInDevTraceSpan(
     {
-      operation: GeminiCliOperation.AgentCall,
+      operation: GeminiCliOperation.AgentTurn,
       sessionId,
       tracesEnabled: true,
       logPrompts: true,
@@ -75,7 +75,9 @@ try {
 
   await flushTelemetry(config);
   await shutdownTelemetry(config, false);
-  console.log(`Phoenix Gemini telemetry smoke succeeded for session ${sessionId}`);
+  console.log(
+    `Phoenix Gemini telemetry smoke succeeded for session ${sessionId}`,
+  );
 } catch (error) {
   console.error('Phoenix Gemini telemetry smoke failed:', error);
   await shutdownTelemetry(config, false);

@@ -14,6 +14,22 @@ import {
   type Mock,
 } from 'vitest';
 
+const runInDevTraceSpan = vi.hoisted(() =>
+  vi.fn(async (opts, fn) => {
+    const metadata = {
+      name: opts.operation,
+      input: undefined,
+      output: undefined,
+      attributes: opts.attributes ?? {},
+    };
+    return fn({ metadata });
+  }),
+);
+
+vi.mock('../telemetry/trace.js', () => ({
+  runInDevTraceSpan,
+}));
+
 import type { Content, GenerateContentResponse, Part } from '@google/genai';
 import { GeminiClient } from './client.js';
 import {
@@ -53,6 +69,12 @@ import { LlmRole, LoopType } from '../telemetry/types.js';
 import { partToString } from '../utils/partUtils.js';
 import { coreEvents, CoreEvent } from '../utils/events.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
+import {
+  GEMINI_CLI_OPERATION_KIND,
+  GEMINI_CLI_TURN_ID,
+  GEN_AI_PROMPT_NAME,
+  GeminiCliOperation,
+} from '../telemetry/constants.js';
 
 // Mock fs module to prevent actual file system operations during tests
 const mockFileSystem = new Map<string, string>();
@@ -255,6 +277,8 @@ describe('Gemini Client (client.ts)', () => {
         .mockReturnValue(mockRouterService as unknown as ModelRouterService),
       getMessageBus: vi.fn().mockReturnValue(undefined),
       getEnableHooks: vi.fn().mockReturnValue(false),
+      getTelemetryLogPromptsEnabled: vi.fn().mockReturnValue(true),
+      getTelemetryTracesEnabled: vi.fn().mockReturnValue(true),
       getChatCompression: vi.fn().mockReturnValue(undefined),
       getCompressionThreshold: vi.fn().mockReturnValue(undefined),
       getSkipNextSpeakerCheck: vi.fn().mockReturnValue(false),
@@ -716,6 +740,37 @@ describe('Gemini Client (client.ts)', () => {
   });
 
   describe('sendMessageStream', () => {
+    it('wraps each user request in an agent turn span', async () => {
+      mockTurnRunFn.mockReturnValue(
+        (async function* () {
+          yield { type: 'content', value: 'Hello' };
+        })(),
+      );
+
+      const stream = client.sendMessageStream(
+        [{ text: 'Hi' }],
+        new AbortController().signal,
+        'prompt-id-1',
+      );
+
+      await fromAsync(stream);
+
+      expect(runInDevTraceSpan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: GeminiCliOperation.AgentTurn,
+          sessionId: 'test-session-id',
+          logPrompts: true,
+          tracesEnabled: true,
+          attributes: expect.objectContaining({
+            [GEMINI_CLI_OPERATION_KIND]: 'agent_turn',
+            [GEMINI_CLI_TURN_ID]: 'prompt-id-1',
+            [GEN_AI_PROMPT_NAME]: 'prompt-id-1',
+          }),
+        }),
+        expect.any(Function),
+      );
+    });
+
     it('calls AgentHistoryProvider.manageHistory when history truncation is enabled', async () => {
       // Arrange
       mockConfig.getContextManagementConfig = vi
