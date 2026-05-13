@@ -67,4 +67,5 @@ export enum GeminiCliOperation {
   AgentCall = 'agent_call',
   AgentTurn = 'gemini_cli.agent_turn',
   ScheduleToolCalls = 'schedule_tool_calls',
+  SelfIntrospection = 'gemini_cli.chain.self_introspection',
 }

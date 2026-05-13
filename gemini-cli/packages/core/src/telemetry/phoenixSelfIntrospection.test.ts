@@ -1,0 +1,200 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Config } from '../config/config.js';
+import {
+  CoreToolCallStatus,
+  type ErroredToolCall,
+} from '../scheduler/types.js';
+import { ToolErrorType } from '../tools/tool-error.js';
+import { SHELL_TOOL_NAME } from '../tools/tool-names.js';
+import {
+  GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_OUTPUT_PREVIEW,
+  GEMINI_CLI_OUTPUT_SHA256,
+  GEN_AI_TOOL_NAME,
+} from './constants.js';
+import {
+  buildTraceRepairEvidenceText,
+  queryPhoenixForFailedToolCall,
+} from './phoenixSelfIntrospection.js';
+
+const flushTelemetry = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const runInDevTraceSpan = vi.hoisted(() =>
+  vi.fn(async (_opts, fn) => fn({ metadata: { attributes: {} } })),
+);
+
+vi.mock('./sdk.js', () => ({
+  flushTelemetry,
+}));
+
+vi.mock('./trace.js', () => ({
+  runInDevTraceSpan,
+}));
+
+describe('phoenix self introspection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('degrades clearly when Phoenix MCP is unavailable', async () => {
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => undefined,
+    } as unknown as Config;
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: false,
+      available: false,
+      reason: expect.stringContaining('Phoenix MCP client unavailable'),
+    });
+    expect(flushTelemetry).toHaveBeenCalledWith(config);
+  });
+
+  it('does not throw when telemetry flush fails before querying Phoenix MCP', async () => {
+    flushTelemetry.mockRejectedValueOnce(new Error('flush failed'));
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => undefined,
+    } as unknown as Config;
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: false,
+      reason: expect.stringContaining('Phoenix telemetry flush failed'),
+    });
+    expect(runInDevTraceSpan).not.toHaveBeenCalled();
+  });
+
+  it('queries Phoenix MCP and extracts safe failed span evidence', async () => {
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: 'gemini_cli.tool.shell',
+            attributes: {
+              [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+              [GEMINI_CLI_COMMAND_EXIT_CODE]: 2,
+              [GEMINI_CLI_OUTPUT_PREVIEW]:
+                'Output: failing test\nOPENAI_API_KEY=sk-proj-redactedSecret000000',
+              [GEMINI_CLI_OUTPUT_SHA256]: 'abc123',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => ({
+        getMcpServers: () => ({ phoenix: {} }),
+        getClient: (serverName: string) =>
+          serverName === 'phoenix'
+            ? {
+                getStatus: () => 'connected',
+              }
+            : undefined,
+      }),
+      getToolRegistry: () => ({
+        getToolsByServer: (serverName: string) =>
+          serverName === 'phoenix'
+            ? [
+                {
+                  name: 'mcp_phoenix_get_spans',
+                  serverToolName: 'get-spans',
+                  buildAndExecute,
+                },
+              ]
+            : [],
+      }),
+    } as unknown as Config;
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: {
+        spanName: 'gemini_cli.tool.shell',
+        toolName: SHELL_TOOL_NAME,
+        exitCode: 2,
+        outputSha256: 'abc123',
+        outputPreview: expect.stringContaining('[REDACTED]'),
+      },
+    });
+    if (!result.available) {
+      throw new Error('Expected Phoenix self-introspection evidence');
+    }
+    expect(result.evidence?.outputPreview).not.toContain('sk-proj-redacted');
+    expect(buildAndExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        names: expect.arrayContaining(['gemini_cli.tool.shell']),
+        limit: 20,
+      }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('formats trace evidence as repair-planning context without raw secrets', () => {
+    const text = buildTraceRepairEvidenceText({
+      attempted: true,
+      available: true,
+      evidence: {
+        spanName: 'gemini_cli.tool.shell',
+        toolName: SHELL_TOOL_NAME,
+        exitCode: 1,
+        outputPreview: 'Error: [REDACTED]',
+        outputSha256: 'hash',
+      },
+    });
+
+    expect(text).toContain('TracePilot Phoenix evidence');
+    expect(text).toContain('repair plan');
+    expect(text).toContain('gemini_cli.tool.shell');
+    expect(text).not.toContain('sk-');
+  });
+});
+
+function makeFailedShellCall(): ErroredToolCall {
+  return {
+    status: CoreToolCallStatus.Error,
+    request: {
+      callId: 'call-shell',
+      name: SHELL_TOOL_NAME,
+      args: { command: 'npm test' },
+      isClientInitiated: false,
+      prompt_id: 'prompt-1',
+    },
+    response: {
+      callId: 'call-shell',
+      responseParts: [],
+      resultDisplay: 'failed',
+      error: new Error('Command failed'),
+      errorType: ToolErrorType.SHELL_EXECUTE_ERROR,
+    },
+  };
+}

@@ -117,6 +117,7 @@ function getOpenInferenceSpanKind(
     case GeminiCliOperationValue.AgentTurn:
     case GeminiCliOperationValue.AgentCall:
       return OpenInferenceSpanKind.Agent;
+    case GeminiCliOperationValue.SelfIntrospection:
     case GeminiCliOperationValue.ScheduleToolCalls:
     case GeminiCliOperationValue.UserPrompt:
     case GeminiCliOperationValue.SystemPrompt:

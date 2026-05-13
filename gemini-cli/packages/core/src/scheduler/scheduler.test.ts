@@ -41,6 +41,14 @@ vi.mock('../telemetry/types.js', () => ({
   ToolCallEvent: vi.fn().mockImplementation((call) => ({ ...call })),
 }));
 
+const queryPhoenixForFailedToolCall = vi.hoisted(() => vi.fn());
+const buildTraceRepairEvidenceText = vi.hoisted(() => vi.fn());
+
+vi.mock('../telemetry/phoenixSelfIntrospection.js', () => ({
+  queryPhoenixForFailedToolCall,
+  buildTraceRepairEvidenceText,
+}));
+
 import {
   SchedulerStateManager,
   type TerminalCallHandler,
@@ -269,6 +277,16 @@ describe('Scheduler (Orchestrator)', () => {
       rule: undefined,
     });
     vi.mocked(updatePolicy).mockReset();
+    queryPhoenixForFailedToolCall.mockReset();
+    queryPhoenixForFailedToolCall.mockResolvedValue({
+      attempted: false,
+      available: false,
+      reason: 'Phoenix MCP client unavailable or disconnected.',
+    });
+    buildTraceRepairEvidenceText.mockReset();
+    buildTraceRepairEvidenceText.mockReturnValue(
+      'TracePilot Phoenix self-introspection unavailable: Phoenix MCP client unavailable or disconnected.',
+    );
 
     mockExecutor = {
       execute: vi.fn(),
@@ -1060,10 +1078,12 @@ describe('Scheduler (Orchestrator)', () => {
       const mockResponse = {
         callId: 'call-1',
         error: new Error('fail'),
+        responseParts: [],
       } as unknown as ToolCallResponseInfo;
 
       mockExecutor.execute.mockResolvedValue({
         status: CoreToolCallStatus.Error,
+        request: req1,
         response: mockResponse,
       } as unknown as ErroredToolCall);
 
@@ -1072,7 +1092,101 @@ describe('Scheduler (Orchestrator)', () => {
       expect(mockStateManager.updateStatus).toHaveBeenCalledWith(
         'call-1',
         CoreToolCallStatus.Error,
-        mockResponse,
+        expect.objectContaining({
+          callId: 'call-1',
+          error: mockResponse.error,
+          data: expect.objectContaining({
+            tracepilotSelfIntrospection: expect.objectContaining({
+              attempted: false,
+              available: false,
+            }),
+          }),
+          responseParts: [
+            expect.objectContaining({
+              functionResponse: expect.objectContaining({
+                id: 'call-1',
+                name: req1.name,
+                response: expect.objectContaining({
+                  error: 'fail',
+                  tracepilot_self_introspection:
+                    'TracePilot Phoenix self-introspection unavailable: Phoenix MCP client unavailable or disconnected.',
+                }),
+              }),
+            }),
+          ],
+        }),
+      );
+    });
+
+    it('queries Phoenix self-introspection on execution failure and attaches repair evidence', async () => {
+      const request: ToolCallRequestInfo = {
+        ...req1,
+        name: 'run_shell_command',
+        args: { command: 'npm test' },
+      };
+      const mockResponse = {
+        callId: 'call-1',
+        responseParts: [
+          {
+            functionResponse: {
+              id: 'call-1',
+              name: 'run_shell_command',
+              response: { error: 'fail' },
+            },
+          },
+        ],
+        resultDisplay: undefined,
+        error: new Error('fail'),
+        errorType: ToolErrorType.SHELL_EXECUTE_ERROR,
+      } as ToolCallResponseInfo;
+      const introspectionResult = {
+        attempted: true,
+        available: true,
+        evidence: {
+          spanName: 'gemini_cli.tool.shell',
+          exitCode: 1,
+          outputPreview: 'test failed',
+          outputSha256: 'hash',
+        },
+      };
+      queryPhoenixForFailedToolCall.mockResolvedValue(introspectionResult);
+      buildTraceRepairEvidenceText.mockReturnValue(
+        'TracePilot Phoenix evidence for repair plan:\nspan=gemini_cli.tool.shell',
+      );
+
+      mockExecutor.execute.mockResolvedValue({
+        status: CoreToolCallStatus.Error,
+        request,
+        response: mockResponse,
+      } as unknown as ErroredToolCall);
+
+      await scheduler.schedule(request, signal);
+
+      expect(queryPhoenixForFailedToolCall).toHaveBeenCalledWith(
+        mockConfig,
+        expect.objectContaining({
+          status: CoreToolCallStatus.Error,
+          request,
+        }),
+      );
+      expect(mockStateManager.updateStatus).toHaveBeenCalledWith(
+        'call-1',
+        CoreToolCallStatus.Error,
+        expect.objectContaining({
+          data: expect.objectContaining({
+            tracepilotSelfIntrospection: introspectionResult,
+          }),
+          responseParts: [
+            expect.objectContaining({
+              functionResponse: expect.objectContaining({
+                response: expect.objectContaining({
+                  tracepilot_self_introspection:
+                    'TracePilot Phoenix evidence for repair plan:\nspan=gemini_cli.tool.shell',
+                }),
+              }),
+            }),
+          ],
+        }),
       );
     });
 
