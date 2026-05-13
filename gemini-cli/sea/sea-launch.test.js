@@ -334,6 +334,7 @@ describe('sea-launch', () => {
         },
         processUid: 1000,
         processPid: 123,
+        platform: 'linux',
       };
 
       mockGetAsset.mockReturnValue(Buffer.from('asset_content'));
@@ -391,6 +392,7 @@ describe('sea-launch', () => {
         },
         processUid: 1000,
         processPid: 123,
+        platform: 'linux',
       };
 
       mockGetAsset.mockReturnValue(Buffer.from('asset_content'));
@@ -399,6 +401,62 @@ describe('sea-launch', () => {
 
       expect(deps.fs.rmSync).toHaveBeenCalledWith(
         expect.stringContaining('gemini-runtime'),
+        expect.anything(),
+      );
+    });
+
+    it('does not reject existing runtime for POSIX mode bits on Windows', () => {
+      const deps = {
+        fs: {
+          existsSync: vi.fn().mockReturnValue(true),
+          rmSync: vi.fn(),
+          mkdirSync: vi.fn(),
+          writeFileSync: vi.fn(),
+          renameSync: vi.fn(),
+          readFileSync: vi.fn().mockReturnValue('content'),
+          openSync: vi.fn(() => 1),
+          readSync: vi.fn((fd, buffer) => {
+            if (!buffer._readDone) {
+              buffer._readDone = true;
+              return 1;
+            }
+            return 0;
+          }),
+          closeSync: vi.fn(),
+          lstatSync: vi.fn(() => ({
+            isDirectory: () => true,
+            uid: 1000,
+            mode: S_IFDIR | 0o777,
+          })),
+        },
+        os: {
+          userInfo: () => ({ username: 'user' }),
+          tmpdir: () => '/tmp',
+        },
+        path: path,
+        processEnv: {},
+        crypto: {
+          createHash: vi.fn(() => {
+            const hash = {
+              update: vi.fn().mockReturnThis(),
+              digest: vi.fn(() => 'h1'),
+            };
+            return hash;
+          }),
+        },
+        processUid: 1000,
+        processPid: 123,
+        platform: 'win32',
+      };
+
+      mockGetAsset.mockReturnValue(Buffer.from('asset_content'));
+
+      const runtime = prepareRuntime(mockManifest, mockGetAsset, deps);
+
+      expect(runtime).toContain('gemini-runtime');
+      expect(deps.fs.rmSync).not.toHaveBeenCalled();
+      expect(deps.fs.mkdirSync).not.toHaveBeenCalledWith(
+        expect.stringContaining('gemini-setup'),
         expect.anything(),
       );
     });
@@ -593,12 +651,6 @@ describe('sea-launch', () => {
     });
 
     it('uses LOCALAPPDATA on Windows if available', () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', {
-        value: 'win32',
-        configurable: true,
-      });
-
       const deps = {
         fs: {
           existsSync: vi.fn().mockReturnValue(false),
@@ -644,6 +696,7 @@ describe('sea-launch', () => {
           }),
         },
         processUid: 'unknown',
+        platform: 'win32',
       };
 
       prepareRuntime(mockManifest, mockGetAsset, deps);
@@ -653,19 +706,9 @@ describe('sea-launch', () => {
         expect.objectContaining({ recursive: true }),
       );
 
-      Object.defineProperty(process, 'platform', {
-        value: originalPlatform,
-        configurable: true,
-      });
     });
 
     it('falls back to tmpdir on Windows if LOCALAPPDATA is missing', () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', {
-        value: 'win32',
-        configurable: true,
-      });
-
       const deps = {
         fs: {
           existsSync: vi.fn().mockReturnValue(false),
@@ -709,6 +752,7 @@ describe('sea-launch', () => {
           }),
         },
         processUid: 'unknown',
+        platform: 'win32',
       };
 
       const runtime = prepareRuntime(mockManifest, mockGetAsset, deps);
@@ -717,19 +761,9 @@ describe('sea-launch', () => {
       expect(runtime).toContain('C:\\Temp');
       expect(runtime).not.toContain('Google\\GeminiCLI');
 
-      Object.defineProperty(process, 'platform', {
-        value: originalPlatform,
-        configurable: true,
-      });
     });
 
     it('falls back to tmpdir on Windows if mkdir fails', () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', {
-        value: 'win32',
-        configurable: true,
-      });
-
       const deps = {
         fs: {
           existsSync: vi.fn().mockReturnValue(false),
@@ -779,6 +813,7 @@ describe('sea-launch', () => {
           }),
         },
         processUid: 'unknown',
+        platform: 'win32',
       };
 
       const runtime = prepareRuntime(mockManifest, mockGetAsset, deps);
@@ -790,10 +825,6 @@ describe('sea-launch', () => {
         expect.anything(),
       );
 
-      Object.defineProperty(process, 'platform', {
-        value: originalPlatform,
-        configurable: true,
-      });
     });
   });
 });
