@@ -45,6 +45,7 @@ import {
   NoopSandboxManager,
   type SandboxPermissions,
 } from '../services/sandboxManager.js';
+import { classifyTracePilotCommandRisk } from './tracepilot-command-risk.js';
 
 function isWildcardPattern(name: string): boolean {
   return name === '*' || name.includes('*');
@@ -307,19 +308,26 @@ export class PolicyEngine {
     command: string,
     decision: PolicyDecision,
   ): Promise<PolicyDecision> {
+    const tracePilotRisk = classifyTracePilotCommandRisk(command);
+    if (tracePilotRisk.level === 'blocked') {
+      debugLogger.debug(
+        `[PolicyEngine.check] TracePilot blocked shell command: ${tracePilotRisk.reason}`,
+      );
+      return PolicyDecision.DENY;
+    }
+    if (tracePilotRisk.level === 'high' && decision === PolicyDecision.ALLOW) {
+      debugLogger.debug(
+        `[PolicyEngine.check] TracePilot high-risk shell command requires confirmation: ${tracePilotRisk.reason}`,
+      );
+      return PolicyDecision.ASK_USER;
+    }
+
     await initializeShellParsers();
     try {
       const parsedObjArgs = shellParse(command);
       const parsedArgs = parsedObjArgs.map(extractStringFromParseEntry);
 
       if (this.sandboxManager.isDangerousCommand(parsedArgs)) {
-        if (this.approvalMode === ApprovalMode.YOLO) {
-          debugLogger.debug(
-            `[PolicyEngine.check] Command evaluated as dangerous, but YOLO mode is active. Preserving decision: ${command}`,
-          );
-          return decision;
-        }
-
         debugLogger.debug(
           `[PolicyEngine.check] Command evaluated as dangerous, forcing ASK_USER: ${command}`,
         );
@@ -357,6 +365,23 @@ export class PolicyEngine {
         decision: ruleDecision,
         rule,
       };
+    }
+
+    const tracePilotRisk = classifyTracePilotCommandRisk(command);
+    if (tracePilotRisk.level === 'blocked') {
+      debugLogger.debug(
+        `[PolicyEngine.check] TracePilot blocked shell command: ${tracePilotRisk.reason}`,
+      );
+      return { decision: PolicyDecision.DENY, rule };
+    }
+    if (
+      tracePilotRisk.level === 'high' &&
+      ruleDecision === PolicyDecision.ALLOW
+    ) {
+      debugLogger.debug(
+        `[PolicyEngine.check] TracePilot high-risk shell command requires confirmation: ${tracePilotRisk.reason}`,
+      );
+      return { decision: PolicyDecision.ASK_USER, rule: undefined };
     }
 
     await initializeShellParsers();

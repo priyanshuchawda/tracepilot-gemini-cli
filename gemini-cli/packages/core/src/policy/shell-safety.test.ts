@@ -171,7 +171,7 @@ describe('Shell Safety Policy', () => {
     // The "git log" part is ALLOW, but "rm -rf /" is ASK_USER (default).
     // Aggregate should be ASK_USER.
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow "git log; rm -rf /" (semicolon separator)', async () => {
@@ -180,7 +180,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'git log; rm -rf /' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow "git log || rm -rf /" (OR separator)', async () => {
@@ -189,7 +189,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'git log || rm -rf /' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow "git log &&& rm -rf /" when prefix is "git log" (parse failure)', async () => {
@@ -200,7 +200,7 @@ describe('Shell Safety Policy', () => {
 
     // Desired behavior: Should fail safe (ASK_USER or DENY) because parsing failed.
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow command substitution $(rm -rf /)', async () => {
@@ -213,7 +213,7 @@ describe('Shell Safety Policy', () => {
     // Since `rm` does not match the allowed prefix, this should result in ASK_USER.
     const echoPolicy = createPolicyEngineWithPrefix('echo');
     const result = await echoPolicy.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD allow command substitution if inner command is ALSO allowed', async () => {
@@ -253,7 +253,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'echo `rm -rf /`' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow process substitution <(rm -rf /)', async () => {
@@ -262,7 +262,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'diff <(git log) <(rm -rf /)' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow process substitution >(rm -rf /)', async () => {
@@ -272,7 +272,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'tee >(rm -rf /)' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow piped commands "git log | rm -rf /"', async () => {
@@ -281,7 +281,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'git log | rm -rf /' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow argument injection via --arg=$(rm -rf /)', async () => {
@@ -290,7 +290,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'git log --format=$(rm -rf /)' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD NOT allow complex nested commands "git log && echo $(git log | rm -rf /)"', async () => {
@@ -299,7 +299,7 @@ describe('Shell Safety Policy', () => {
       args: { command: 'git log && echo $(git log | rm -rf /)' },
     };
     const result = await policyEngine.check(toolCall, undefined);
-    expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    expect(result.decision).toBe(PolicyDecision.DENY);
   });
 
   it('SHOULD allow complex allowed commands "git log && echo $(git log)"', async () => {
@@ -536,4 +536,60 @@ describe('Shell Safety Policy', () => {
     // Expect the rule that first caused ASK_USER to be blamed
     expect(result.rule?.name).toBe('ask_rule_1');
   });
+
+  it.each(['rm -rf /', 'cat .env', 'printenv', 'rg -n "api_key|password" .'])(
+    'SHOULD deny TracePilot blocked command "%s" even in allow-all mode',
+    async (command) => {
+      const allowAllPolicy = new PolicyEngine({
+        rules: [
+          {
+            toolName: '*',
+            decision: PolicyDecision.ALLOW,
+            priority: 999,
+            allowRedirection: true,
+          },
+        ],
+        defaultDecision: PolicyDecision.ALLOW,
+        approvalMode: ApprovalMode.YOLO,
+      });
+
+      const result = await allowAllPolicy.check(
+        {
+          name: 'run_shell_command',
+          args: { command },
+        },
+        undefined,
+      );
+
+      expect(result.decision).toBe(PolicyDecision.DENY);
+    },
+  );
+
+  it.each(['git push origin main', 'chmod -R 777 .', 'npm run deploy'])(
+    'SHOULD require confirmation for TracePilot high-risk command "%s" even in allow-all mode',
+    async (command) => {
+      const allowAllPolicy = new PolicyEngine({
+        rules: [
+          {
+            toolName: '*',
+            decision: PolicyDecision.ALLOW,
+            priority: 999,
+            allowRedirection: true,
+          },
+        ],
+        defaultDecision: PolicyDecision.ALLOW,
+        approvalMode: ApprovalMode.YOLO,
+      });
+
+      const result = await allowAllPolicy.check(
+        {
+          name: 'run_shell_command',
+          args: { command },
+        },
+        undefined,
+      );
+
+      expect(result.decision).toBe(PolicyDecision.ASK_USER);
+    },
+  );
 });

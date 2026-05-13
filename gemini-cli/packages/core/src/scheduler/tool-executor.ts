@@ -62,6 +62,7 @@ import {
 } from '../telemetry/constants.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
 import { createRedactedOutputPreview } from '../telemetry/sanitize.js';
+import { classifyTracePilotCommandRisk } from '../policy/tracepilot-command-risk.js';
 
 const FILE_TOOL_NAMES = new Set<string>([
   READ_FILE_TOOL_NAME,
@@ -80,43 +81,6 @@ function getStringArg(
   return typeof value === 'string' ? value : undefined;
 }
 
-function classifyShellCommandRisk(command: string | undefined): string {
-  const normalized = (command ?? '').trim().toLowerCase();
-  if (!normalized) {
-    return 'unknown';
-  }
-  if (
-    /\brm\s+-rf\s+(?:\/|~|\$home|\$env:userprofile)\b/.test(normalized) ||
-    /\b(?:printenv|env|set)\b/.test(normalized) ||
-    /\bcat\s+\.env\b/.test(normalized)
-  ) {
-    return 'blocked';
-  }
-  if (
-    /\bgit\s+push\b/.test(normalized) ||
-    /\b(?:deploy|chmod|chown)\b/.test(normalized) ||
-    /\brm\s+-rf\b/.test(normalized)
-  ) {
-    return 'high';
-  }
-  if (
-    /\b(?:npm|pnpm|yarn)\s+(?:install|add|update|upgrade)\b/.test(normalized) ||
-    /\b(?:npm|pnpm|yarn)\s+run\s+(?:format|fix|lint:fix)\b/.test(normalized)
-  ) {
-    return 'medium';
-  }
-  if (
-    /^(?:pwd|ls|dir)(?:\s|$)/.test(normalized) ||
-    /^(?:grep|rg|cat)(?:\s|$)/.test(normalized) ||
-    /^(?:npm|pnpm|yarn)\s+(?:test|run\s+(?:build|test|typecheck|lint))(?:\s|$)/.test(
-      normalized,
-    )
-  ) {
-    return 'low';
-  }
-  return 'medium';
-}
-
 function getToolSpanInfo(
   toolName: string,
   tool: unknown,
@@ -130,9 +94,9 @@ function getToolSpanInfo(
       operation: GeminiCliOperation.ToolShell,
       attributes: {
         [GEMINI_CLI_TOOL_KIND]: 'shell',
-        [GEMINI_CLI_COMMAND_RISK_LEVEL]: classifyShellCommandRisk(
+        [GEMINI_CLI_COMMAND_RISK_LEVEL]: classifyTracePilotCommandRisk(
           getStringArg(args, 'command'),
-        ),
+        ).level,
       },
     };
   }
