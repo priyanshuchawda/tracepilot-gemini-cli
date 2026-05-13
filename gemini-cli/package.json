@@ -71,6 +71,8 @@
     "smoke:phoenix": "node scripts/phoenix-smoke.mjs",
     "smoke:phoenix:mcp": "node scripts/phoenix-mcp-smoke.mjs",
     "eval:tracepilot": "tsx scripts/tracepilot-evals.ts",
+    "demo:broken-node-app": "tsx scripts/demo-broken-node-app.ts",
+    "demo:broken-node-app:offline": "tsx scripts/demo-broken-node-app.ts --allow-missing-phoenix",
     "check:lockfile": "node scripts/check-lockfile.js",
     "clean": "node scripts/clean.js",
     "pre-commit": "node scripts/pre-commit.js"
