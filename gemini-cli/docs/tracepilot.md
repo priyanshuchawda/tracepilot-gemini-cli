@@ -17,9 +17,10 @@ PHOENIX_COLLECTOR_ENDPOINT=
 PHOENIX_PROJECT=tracepilot-gemini-cli
 ```
 
-Do not print these values in logs or prompts. `PHOENIX_HOST` is required for
-Phoenix MCP. `PHOENIX_BASE_URL` or `PHOENIX_COLLECTOR_ENDPOINT` is required for
-OTEL export.
+Do not print these values in logs or prompts. Phoenix MCP needs a real Phoenix
+base URL; the smoke/demo scripts resolve it from `PHOENIX_HOST`,
+`PHOENIX_BASE_URL`, or a Phoenix Cloud-style `PHOENIX_COLLECTOR_ENDPOINT`.
+`PHOENIX_BASE_URL` or `PHOENIX_COLLECTOR_ENDPOINT` is required for OTEL export.
 
 ## Local Gates
 
@@ -71,23 +72,23 @@ recording or submitting demo evidence.
 
 ## Verification Matrix
 
-| Feature                | Command/test                                         | Status                                  | Evidence                                                                                  |
-| ---------------------- | ---------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Baseline install       | `npm ci`                                             | Working                                 | Passed in audit baseline.                                                                 |
-| Build                  | `npm run build`                                      | Working                                 | Passed during P0/P1 issue verification.                                                   |
-| Lint                   | `npm run lint`                                       | Working                                 | Passed during P0/P1 issue verification.                                                   |
-| Typecheck              | `npm run typecheck`                                  | Working                                 | Passed during P0/P1 issue verification.                                                   |
-| Root tests             | `npm test`                                           | Unverified/long                         | Local audit run exceeded 30 minutes; use focused tests until CI is partitioned.           |
-| Phoenix OTEL export    | `npm run smoke:phoenix`                              | Env-dependent                           | Requires `PHOENIX_API_KEY` and collector/base URL.                                        |
-| Phoenix MCP visibility | `npm run smoke:phoenix:mcp`                          | Blocked without real Phoenix Cloud host | Requires `PHOENIX_HOST`, project, and exported span visibility.                           |
-| Agent/LLM spans        | Core telemetry tests                                 | Working                                 | Span names and OpenInference kinds are covered.                                           |
-| Tool spans             | Scheduler/tool tests                                 | Working                                 | Shell, file, MCP, and Phoenix MCP tool spans carry safe metadata.                         |
-| Redaction              | Sanitizer/eval/demo tests                            | Working for implemented patterns        | API keys, bearer tokens, private keys, env assignments, and similar secrets are redacted. |
-| Command safety         | Policy tests                                         | Working                                 | Blocked/high/medium/low risk classification is covered.                                   |
-| Self-introspection     | Phoenix introspection and scheduler tests            | Partial                                 | Failure path attempts Phoenix MCP and attaches evidence or an unavailable reason.         |
-| Repair planner         | `packages/core/src/tracepilot/repairPlanner.test.ts` | Working locally                         | Planner consumes structured trace evidence and emits `gemini_cli.chain.repair_plan`.      |
-| Evals                  | `npm run test:scripts`                               | Working locally                         | Required deterministic eval IDs produce sanitized JSON.                                   |
-| Broken demo            | `npm run demo:broken-node-app:offline`               | Working locally                         | Strict Phoenix-backed demo depends on MCP visibility.                                     |
+| Feature                | Command/test                                         | Status                           | Evidence                                                                                                        |
+| ---------------------- | ---------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Baseline install       | `npm ci`                                             | Working                          | Passed in audit baseline.                                                                                       |
+| Build                  | `npm run build`                                      | Working                          | Passed during P0/P1 issue verification.                                                                         |
+| Lint                   | `npm run lint`                                       | Working                          | Passed during P0/P1 issue verification.                                                                         |
+| Typecheck              | `npm run typecheck`                                  | Working                          | Passed during P0/P1 issue verification.                                                                         |
+| Root tests             | `npm test`                                           | Unverified/long                  | Local audit run exceeded 30 minutes; use focused tests until CI is partitioned.                                 |
+| Phoenix OTEL export    | `npm run smoke:phoenix`                              | Env-dependent                    | Requires `PHOENIX_API_KEY` and collector/base URL.                                                              |
+| Phoenix MCP visibility | `npm run smoke:phoenix:mcp`                          | Env-dependent                    | Requires Phoenix API key, project, a real Phoenix base URL or collector endpoint, and exported span visibility. |
+| Agent/LLM spans        | Core telemetry tests                                 | Working                          | Span names and OpenInference kinds are covered.                                                                 |
+| Tool spans             | Scheduler/tool tests                                 | Working                          | Shell, file, MCP, and Phoenix MCP tool spans carry safe metadata.                                               |
+| Redaction              | Sanitizer/eval/demo tests                            | Working for implemented patterns | API keys, bearer tokens, private keys, env assignments, and similar secrets are redacted.                       |
+| Command safety         | Policy tests                                         | Working                          | Blocked/high/medium/low risk classification is covered.                                                         |
+| Self-introspection     | Phoenix introspection and scheduler tests            | Partial                          | Failure path attempts Phoenix MCP and attaches evidence or an unavailable reason.                               |
+| Repair planner         | `packages/core/src/tracepilot/repairPlanner.test.ts` | Working locally                  | Planner consumes structured trace evidence and emits `gemini_cli.chain.repair_plan`.                            |
+| Evals                  | `npm run test:scripts`                               | Working locally                  | Required deterministic eval IDs produce sanitized JSON.                                                         |
+| Broken demo            | `npm run demo:broken-node-app:offline`               | Working locally                  | Strict Phoenix-backed demo depends on MCP visibility.                                                           |
 
 ## Limitations
 

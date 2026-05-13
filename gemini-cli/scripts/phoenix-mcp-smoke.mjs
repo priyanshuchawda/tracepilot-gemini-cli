@@ -28,28 +28,50 @@ function fail(message, code = 1) {
 }
 
 function resolvePhoenixHost() {
-  const host = (process.env.PHOENIX_HOST || process.env.PHOENIX_BASE_URL || '')
-    .trim()
-    .replace(/\/+$/, '');
+  const host = resolvePhoenixBaseUrl(process.env);
 
   if (!host) {
     fail(
-      'Missing Phoenix MCP host. Set PHOENIX_HOST to your Phoenix base URL.',
+      'Missing Phoenix MCP host. Set PHOENIX_HOST, PHOENIX_BASE_URL, or a Phoenix Cloud PHOENIX_COLLECTOR_ENDPOINT.',
       2,
     );
-  }
-  if (/YOUR_|your-|example/i.test(host)) {
-    fail(
-      'Phoenix MCP host still contains a placeholder. Set PHOENIX_HOST to your real Phoenix base URL.',
-      2,
-    );
-  }
-  try {
-    new URL(host);
-  } catch {
-    fail('Phoenix MCP host must be a valid absolute URL.', 2);
   }
   return host;
+}
+
+function resolvePhoenixBaseUrl(env) {
+  for (const value of [
+    env.PHOENIX_HOST,
+    env.PHOENIX_BASE_URL,
+    env.PHOENIX_COLLECTOR_ENDPOINT,
+  ]) {
+    const resolved = normalizePhoenixUrl(value);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+function normalizePhoenixUrl(value) {
+  const trimmed = String(value ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed);
+    url.search = '';
+    url.hash = '';
+    url.pathname = url.pathname
+      .replace(/\/+$/, '')
+      .replace(/\/v1\/traces$/i, '')
+      .replace(/\/v1$/i, '');
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
 }
 
 function assertPhoenixEnv() {

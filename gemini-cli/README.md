@@ -30,8 +30,9 @@ agent runtime; this section records what has been verified in this fork.
   not enough; use `npm run smoke:phoenix:mcp` to prove spans are visible and
   queryable.
 - Full end-to-end self-improvement is only complete when Phoenix MCP returns the
-  failed span for the same session. In this workspace that proof is blocked
-  until `PHOENIX_HOST` points at a real Phoenix Cloud space.
+  failed span for the same session. That proof requires a real Phoenix Cloud
+  base URL from `PHOENIX_HOST`, `PHOENIX_BASE_URL`, or a Phoenix Cloud-style
+  `PHOENIX_COLLECTOR_ENDPOINT`.
 - The broken-node demo can run offline with `--allow-missing-phoenix`, but the
   strict demo intentionally fails if Phoenix visibility/queryability is missing.
 
@@ -48,10 +49,11 @@ PHOENIX_COLLECTOR_ENDPOINT=
 PHOENIX_PROJECT=tracepilot-gemini-cli
 ```
 
-`PHOENIX_HOST` is used by Phoenix MCP. `PHOENIX_BASE_URL` or
-`PHOENIX_COLLECTOR_ENDPOINT` is used by OTEL export. For Phoenix Cloud, keep the
-host/base URL pointed at the same space and set the project name you expect to
-query.
+Phoenix MCP needs a real Phoenix base URL. TracePilot smoke/demo scripts resolve
+it from `PHOENIX_HOST`, `PHOENIX_BASE_URL`, or a Phoenix Cloud-style
+`PHOENIX_COLLECTOR_ENDPOINT`. `PHOENIX_BASE_URL` or `PHOENIX_COLLECTOR_ENDPOINT`
+is used by OTEL export. For Phoenix Cloud, keep the host/base URL pointed at the
+same space and set the project name you expect to query.
 
 ### Local Verification
 
@@ -95,7 +97,7 @@ working Phoenix collector and Phoenix MCP configuration.
 | Typecheck                      | `npm run typecheck`                                                                   | Working                          | Passed for issues #11, #12, and #13.                                                                                                                   |
 | Full root tests                | `npm test`                                                                            | Unverified/long                  | Root test run exceeded the local 30 minute budget during audit; use focused slices until CI is hardened.                                               |
 | Phoenix OTEL init/export smoke | `npm run smoke:phoenix`                                                               | Working when Phoenix env is set  | Smoke script creates and flushes a TracePilot span; requires `PHOENIX_API_KEY` plus collector/base URL.                                                |
-| Phoenix MCP visibility         | `npm run smoke:phoenix:mcp`                                                           | Blocked without real Phoenix env | MCP package starts, but span visibility/querying requires `PHOENIX_API_KEY`, a real Phoenix Cloud host, and project.                                   |
+| Phoenix MCP visibility         | `npm run smoke:phoenix:mcp`                                                           | Env-dependent                    | MCP package starts, but span visibility/querying requires `PHOENIX_API_KEY`, project, and a real Phoenix base URL or collector endpoint.               |
 | Agent/LLM spans                | Core telemetry tests                                                                  | Working                          | `gemini_cli.agent_turn` and `gemini_cli.llm.generate` span paths are covered.                                                                          |
 | Shell/file/MCP spans           | Scheduler/tool tests                                                                  | Working                          | Tool spans include safe metadata, risk, output preview/hash, and Phoenix MCP specialization.                                                           |
 | Redaction                      | `packages/core/src/telemetry/sanitize.test.ts` and eval/demo tests                    | Working for implemented patterns | Secrets are redacted before trace/eval/demo previews.                                                                                                  |

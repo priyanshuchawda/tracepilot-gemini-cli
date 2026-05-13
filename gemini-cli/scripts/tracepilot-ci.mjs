@@ -41,7 +41,7 @@ const optionalCommands = [
     ...command('phoenix-mcp-smoke', 'npm', ['run', 'smoke:phoenix:mcp']),
     shouldRun: hasPhoenixMcpEnv,
     skipReason:
-      'missing PHOENIX_API_KEY, PHOENIX_PROJECT, real PHOENIX_HOST, or collector/base URL',
+      'missing PHOENIX_API_KEY, PHOENIX_PROJECT, or a real Phoenix host/base/collector URL',
   },
 ];
 
@@ -111,8 +111,9 @@ async function runCommand(item) {
 
 function spawnAndCapture(executable, args) {
   return new Promise((resolve) => {
-    const child = spawn(executable, args, {
-      shell: process.platform === 'win32',
+    const command = resolveCommand(executable, args);
+    const child = spawn(command.executable, command.args, {
+      shell: false,
       env: {
         ...process.env,
         NO_COLOR: 'true',
@@ -136,6 +137,16 @@ function spawnAndCapture(executable, args) {
   });
 }
 
+function resolveCommand(executable, args) {
+  if (executable === 'npm' && process.env.npm_execpath) {
+    return {
+      executable: process.execPath,
+      args: [process.env.npm_execpath, ...args],
+    };
+  }
+  return { executable, args };
+}
+
 function hasPhoenixCollectorEnv() {
   return Boolean(
     process.env.PHOENIX_API_KEY &&
@@ -144,13 +155,46 @@ function hasPhoenixCollectorEnv() {
 }
 
 function hasPhoenixMcpEnv() {
-  const host = process.env.PHOENIX_HOST || process.env.PHOENIX_BASE_URL || '';
   return Boolean(
     hasPhoenixCollectorEnv() &&
       process.env.PHOENIX_PROJECT &&
-      host &&
-      !/YOUR_|your-|example/i.test(host),
+      resolvePhoenixBaseUrl(process.env),
   );
+}
+
+function resolvePhoenixBaseUrl(env) {
+  for (const value of [
+    env.PHOENIX_HOST,
+    env.PHOENIX_BASE_URL,
+    env.PHOENIX_COLLECTOR_ENDPOINT,
+  ]) {
+    const resolved = normalizePhoenixUrl(value);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return undefined;
+}
+
+function normalizePhoenixUrl(value) {
+  const trimmed = String(value ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
+    return undefined;
+  }
+  try {
+    const url = new URL(trimmed);
+    url.search = '';
+    url.hash = '';
+    url.pathname = url.pathname
+      .replace(/\/+$/, '')
+      .replace(/\/v1\/traces$/i, '')
+      .replace(/\/v1$/i, '');
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
 }
 
 function redact(value) {
