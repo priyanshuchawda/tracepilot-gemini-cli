@@ -92,12 +92,20 @@ Run the local Cloud Run smoke first:
 npm run smoke:cloud-run:local
 ```
 
+If you have rotated Gemini/Phoenix credentials in local `.env` or process env,
+sync them to Secret Manager without printing values:
+
+```bash
+npm run secrets:tracepilot-cloud-run -- --dry-run --project priyanshu-portfolio-458519
+npm run secrets:tracepilot-cloud-run -- --project priyanshu-portfolio-458519
+```
+
 Deploy cheaply to the configured Google Cloud project with min instances set to
 zero and max instances set to one:
 
 ```bash
 gcloud config set project priyanshu-portfolio-458519
-npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --region asia-south1 --service tracepilot-url-proof
+npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --region asia-south1 --service tracepilot-url-proof --secret GEMINI_API_KEY=GEMINI_API_KEY --secret PHOENIX_API_KEY=PHOENIX_API_KEY
 ```
 
 Current verified Cloud Run URL:
@@ -120,6 +128,10 @@ The deployed smoke proves the hosted link responds and does not leak secret-like
 values. It does not prove Phoenix span visibility; run
 `npm run smoke:phoenix:mcp` and `npm run demo:broken-node-app` separately for
 strict Phoenix proof.
+
+If `npm run secrets:tracepilot-cloud-run -- --dry-run` reports missing
+`GEMINI_API_KEY` or `PHOENIX_API_KEY`, put rotated values in local `.env` first.
+Do not paste keys into issue comments, PR descriptions, or terminal logs.
 
 ## Verification Matrix
 
