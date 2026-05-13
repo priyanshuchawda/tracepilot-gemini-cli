@@ -43,10 +43,15 @@ vi.mock('../telemetry/types.js', () => ({
 
 const queryPhoenixForFailedToolCall = vi.hoisted(() => vi.fn());
 const buildTraceRepairEvidenceText = vi.hoisted(() => vi.fn());
+const buildTraceEvidenceRepairPlan = vi.hoisted(() => vi.fn());
 
 vi.mock('../telemetry/phoenixSelfIntrospection.js', () => ({
   queryPhoenixForFailedToolCall,
   buildTraceRepairEvidenceText,
+}));
+
+vi.mock('../tracepilot/repairPlanner.js', () => ({
+  buildTraceEvidenceRepairPlan,
 }));
 
 import {
@@ -287,6 +292,16 @@ describe('Scheduler (Orchestrator)', () => {
     buildTraceRepairEvidenceText.mockReturnValue(
       'TracePilot Phoenix self-introspection unavailable: Phoenix MCP client unavailable or disconnected.',
     );
+    buildTraceEvidenceRepairPlan.mockReset();
+    buildTraceEvidenceRepairPlan.mockResolvedValue({
+      created: false,
+      source: 'unavailable',
+      failedToolName: req1.name,
+      traceEvidenceAvailable: false,
+      referencedTraceEvidence: false,
+      proposedFix: 'Phoenix trace evidence is unavailable.',
+      text: 'TracePilot repair plan unavailable: Phoenix MCP client unavailable or disconnected.',
+    });
 
     mockExecutor = {
       execute: vi.fn(),
@@ -1100,6 +1115,10 @@ describe('Scheduler (Orchestrator)', () => {
               attempted: false,
               available: false,
             }),
+            tracepilotRepairPlan: expect.objectContaining({
+              created: false,
+              source: 'unavailable',
+            }),
           }),
           responseParts: [
             expect.objectContaining({
@@ -1110,6 +1129,8 @@ describe('Scheduler (Orchestrator)', () => {
                   error: 'fail',
                   tracepilot_self_introspection:
                     'TracePilot Phoenix self-introspection unavailable: Phoenix MCP client unavailable or disconnected.',
+                  tracepilot_repair_plan:
+                    'TracePilot repair plan unavailable: Phoenix MCP client unavailable or disconnected.',
                 }),
               }),
             }),
@@ -1153,6 +1174,20 @@ describe('Scheduler (Orchestrator)', () => {
       buildTraceRepairEvidenceText.mockReturnValue(
         'TracePilot Phoenix evidence for repair plan:\nspan=gemini_cli.tool.shell',
       );
+      const repairPlan = {
+        created: true,
+        source: 'phoenix_trace',
+        failedToolName: 'run_shell_command',
+        failedCommand: 'npm test',
+        commandRiskLevel: 'low',
+        traceEvidenceAvailable: true,
+        referencedTraceEvidence: true,
+        failureEvidence: introspectionResult.evidence,
+        proposedFix: 'Use the trace evidence.',
+        verificationCommand: 'npm test',
+        text: 'TracePilot repair plan:\nfailed_command=npm test\noutput_sha256=hash',
+      };
+      buildTraceEvidenceRepairPlan.mockResolvedValue(repairPlan);
 
       mockExecutor.execute.mockResolvedValue({
         status: CoreToolCallStatus.Error,
@@ -1169,12 +1204,21 @@ describe('Scheduler (Orchestrator)', () => {
           request,
         }),
       );
+      expect(buildTraceEvidenceRepairPlan).toHaveBeenCalledWith(
+        mockConfig,
+        expect.objectContaining({
+          status: CoreToolCallStatus.Error,
+          request,
+        }),
+        introspectionResult,
+      );
       expect(mockStateManager.updateStatus).toHaveBeenCalledWith(
         'call-1',
         CoreToolCallStatus.Error,
         expect.objectContaining({
           data: expect.objectContaining({
             tracepilotSelfIntrospection: introspectionResult,
+            tracepilotRepairPlan: repairPlan,
           }),
           responseParts: [
             expect.objectContaining({
@@ -1182,6 +1226,8 @@ describe('Scheduler (Orchestrator)', () => {
                 response: expect.objectContaining({
                   tracepilot_self_introspection:
                     'TracePilot Phoenix evidence for repair plan:\nspan=gemini_cli.tool.shell',
+                  tracepilot_repair_plan:
+                    'TracePilot repair plan:\nfailed_command=npm test\noutput_sha256=hash',
                 }),
               }),
             }),
