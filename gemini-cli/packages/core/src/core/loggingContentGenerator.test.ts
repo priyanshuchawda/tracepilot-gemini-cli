@@ -144,7 +144,7 @@ describe('LoggingContentGenerator', () => {
 
       expect(runInDevTraceSpan).toHaveBeenCalledWith(
         expect.objectContaining({
-          operation: GeminiCliOperation.LLMCall,
+          operation: GeminiCliOperation.LLMGenerate,
           attributes: expect.objectContaining({
             [GEN_AI_REQUEST_MODEL]: 'gemini-pro',
             [GEN_AI_PROMPT_NAME]: userPromptId,
@@ -208,7 +208,7 @@ describe('LoggingContentGenerator', () => {
 
       expect(runInDevTraceSpan).toHaveBeenCalledWith(
         expect.objectContaining({
-          operation: GeminiCliOperation.LLMCall,
+          operation: GeminiCliOperation.LLMGenerate,
           attributes: expect.objectContaining({
             [GEN_AI_REQUEST_MODEL]: 'gemini-pro',
             [GEN_AI_PROMPT_NAME]: userPromptId,
@@ -502,7 +502,7 @@ describe('LoggingContentGenerator', () => {
 
       expect(runInDevTraceSpan).toHaveBeenCalledWith(
         expect.objectContaining({
-          operation: GeminiCliOperation.LLMCall,
+          operation: GeminiCliOperation.LLMGenerate,
 
           attributes: expect.objectContaining({
             [GEN_AI_REQUEST_MODEL]: 'gemini-pro',

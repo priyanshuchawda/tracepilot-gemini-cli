@@ -39,6 +39,7 @@ import { runInDevTraceSpan, type SpanMetadata } from '../telemetry/trace.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { isAbortError, getErrorType } from '../utils/errors.js';
 import {
+  GEMINI_CLI_OPERATION_KIND,
   GeminiCliOperation,
   GEN_AI_PROMPT_NAME,
   GEN_AI_REQUEST_MODEL,
@@ -359,11 +360,12 @@ export class LoggingContentGenerator implements ContentGenerator {
   ): Promise<GenerateContentResponse> {
     return runInDevTraceSpan(
       {
-        operation: GeminiCliOperation.LLMCall,
+        operation: GeminiCliOperation.LLMGenerate,
         logPrompts: this.config.getTelemetryLogPromptsEnabled(),
         tracesEnabled: this.config.getTelemetryTracesEnabled(),
         sessionId: this.config.getSessionId(),
         attributes: {
+          [GEMINI_CLI_OPERATION_KIND]: 'llm_generate',
           [GEN_AI_REQUEST_MODEL]: req.model,
           [GEN_AI_PROMPT_NAME]: userPromptId,
           [GEN_AI_SYSTEM_INSTRUCTIONS]: safeJsonStringify(
@@ -451,11 +453,12 @@ export class LoggingContentGenerator implements ContentGenerator {
   ): Promise<AsyncGenerator<GenerateContentResponse>> {
     return runInDevTraceSpan(
       {
-        operation: GeminiCliOperation.LLMCall,
+        operation: GeminiCliOperation.LLMGenerate,
         logPrompts: this.config.getTelemetryLogPromptsEnabled(),
         tracesEnabled: this.config.getTelemetryTracesEnabled(),
         sessionId: this.config.getSessionId(),
         attributes: {
+          [GEMINI_CLI_OPERATION_KIND]: 'llm_generate',
           [GEN_AI_REQUEST_MODEL]: req.model,
           [GEN_AI_PROMPT_NAME]: userPromptId,
           [GEN_AI_SYSTEM_INSTRUCTIONS]: safeJsonStringify(

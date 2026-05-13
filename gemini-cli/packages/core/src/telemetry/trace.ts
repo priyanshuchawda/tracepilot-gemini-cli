@@ -105,10 +105,12 @@ function getOpenInferenceSpanKind(
   operation: GeminiCliOperation,
 ): OpenInferenceSpanKind {
   switch (operation) {
+    case GeminiCliOperationValue.LLMGenerate:
     case GeminiCliOperationValue.LLMCall:
       return OpenInferenceSpanKind.Llm;
     case GeminiCliOperationValue.ToolCall:
       return OpenInferenceSpanKind.Tool;
+    case GeminiCliOperationValue.AgentTurn:
     case GeminiCliOperationValue.AgentCall:
       return OpenInferenceSpanKind.Agent;
     case GeminiCliOperationValue.ScheduleToolCalls:
@@ -143,7 +145,7 @@ export interface SpanMetadata {
  * @example
  * ```typescript
  * await runInDevTraceSpan(
- *   { operation: GeminiCliOperation.LLMCall, sessionId: 'my-session' },
+ *   { operation: GeminiCliOperation.LLMGenerate, sessionId: 'my-session' },
  *   async ({ metadata }) => {
  *     metadata.input = { foo: 'bar' };
  *     // ... do work ...

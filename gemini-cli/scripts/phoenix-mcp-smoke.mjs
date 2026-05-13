@@ -139,7 +139,7 @@ async function createSmokeSpan(sessionId) {
     await initializeTelemetry(config);
     await runInDevTraceSpan(
       {
-        operation: GeminiCliOperation.AgentCall,
+        operation: GeminiCliOperation.AgentTurn,
         sessionId,
         tracesEnabled: true,
         logPrompts: true,
@@ -195,7 +195,7 @@ async function querySmokeSpan(sessionId, host) {
         arguments: {
           project_identifier: process.env.PHOENIX_PROJECT,
           start_time: startTime,
-          names: ['agent_call'],
+          names: ['gemini_cli.agent_turn'],
           limit: 100,
         },
       });

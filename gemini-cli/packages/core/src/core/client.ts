@@ -48,6 +48,13 @@ import { AgentHistoryProvider } from '../context/agentHistoryProvider.js';
 import type { ContextManager } from '../context/contextManager.js';
 import { ideContextStore } from '../ide/ideContext.js';
 import { logNextSpeakerCheck } from '../telemetry/loggers.js';
+import { runInDevTraceSpan } from '../telemetry/trace.js';
+import {
+  GEMINI_CLI_OPERATION_KIND,
+  GEMINI_CLI_TURN_ID,
+  GEN_AI_PROMPT_NAME,
+  GeminiCliOperation,
+} from '../telemetry/constants.js';
 import type {
   DefaultHookOutput,
   AfterAgentHookOutput,
@@ -874,6 +881,42 @@ export class GeminiClient {
   }
 
   async *sendMessageStream(
+    request: PartListUnion,
+    signal: AbortSignal,
+    prompt_id: string,
+    turns: number = MAX_TURNS,
+    displayContent?: PartListUnion,
+    stopHookActive: boolean = false,
+  ): AsyncGenerator<ServerGeminiStreamEvent, Turn> {
+    const stream = await runInDevTraceSpan(
+      {
+        operation: GeminiCliOperation.AgentTurn,
+        logPrompts: this.config.getTelemetryLogPromptsEnabled(),
+        tracesEnabled: this.config.getTelemetryTracesEnabled(),
+        sessionId: this.config.getSessionId(),
+        attributes: {
+          [GEMINI_CLI_OPERATION_KIND]: 'agent_turn',
+          [GEMINI_CLI_TURN_ID]: prompt_id,
+          [GEN_AI_PROMPT_NAME]: prompt_id,
+        },
+      },
+      async ({ metadata }) => {
+        metadata.input = request;
+        return this.sendMessageStreamWithoutTracing(
+          request,
+          signal,
+          prompt_id,
+          turns,
+          displayContent,
+          stopHookActive,
+        );
+      },
+    );
+
+    return yield* stream;
+  }
+
+  private async *sendMessageStreamWithoutTracing(
     request: PartListUnion,
     signal: AbortSignal,
     prompt_id: string,

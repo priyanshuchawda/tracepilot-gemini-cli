@@ -30,6 +30,9 @@ export const GEN_AI_CONVERSATION_ID = 'gen_ai.conversation.id';
 // OpenInference semantic convention used by Phoenix to render span kinds.
 export const OPENINFERENCE_SPAN_KIND = 'openinference.span.kind';
 
+export const GEMINI_CLI_OPERATION_KIND = 'gemini_cli.operation.kind';
+export const GEMINI_CLI_TURN_ID = 'gemini_cli.turn.id';
+
 export enum OpenInferenceSpanKind {
   Agent = 'AGENT',
   Chain = 'CHAIN',
@@ -41,8 +44,10 @@ export enum OpenInferenceSpanKind {
 export enum GeminiCliOperation {
   ToolCall = 'tool_call',
   LLMCall = 'llm_call',
+  LLMGenerate = 'gemini_cli.llm.generate',
   UserPrompt = 'user_prompt',
   SystemPrompt = 'system_prompt',
   AgentCall = 'agent_call',
+  AgentTurn = 'gemini_cli.agent_turn',
   ScheduleToolCalls = 'schedule_tool_calls',
 }

@@ -119,7 +119,7 @@ describe('runInDevTraceSpan', () => {
 
     const result = await runInDevTraceSpan(
       {
-        operation: GeminiCliOperation.LLMCall,
+        operation: GeminiCliOperation.LLMGenerate,
         sessionId: 'test-session-id',
         tracesEnabled: true,
       },
@@ -129,11 +129,40 @@ describe('runInDevTraceSpan', () => {
     expect(result).toBe('result');
     expect(trace.getTracer).toHaveBeenCalled();
     expect(mockTracer.startActiveSpan).toHaveBeenCalledWith(
-      GeminiCliOperation.LLMCall,
+      GeminiCliOperation.LLMGenerate,
       {
         attributes: {
           [GEN_AI_CONVERSATION_ID]: 'test-session-id',
           [OPENINFERENCE_SPAN_KIND]: OpenInferenceSpanKind.Llm,
+        },
+      },
+      expect.any(Function),
+    );
+  });
+
+  it('classifies agent turn spans with OpenInference AGENT kind', async () => {
+    await runInDevTraceSpan(
+      {
+        operation: GeminiCliOperation.AgentTurn,
+        sessionId: 'test-session-id',
+        tracesEnabled: true,
+      },
+      async ({ metadata }) => {
+        expect(metadata.attributes[GEN_AI_OPERATION_NAME]).toBe(
+          GeminiCliOperation.AgentTurn,
+        );
+        expect(metadata.attributes[OPENINFERENCE_SPAN_KIND]).toBe(
+          OpenInferenceSpanKind.Agent,
+        );
+      },
+    );
+
+    expect(mockTracer.startActiveSpan).toHaveBeenCalledWith(
+      GeminiCliOperation.AgentTurn,
+      {
+        attributes: {
+          [GEN_AI_CONVERSATION_ID]: 'test-session-id',
+          [OPENINFERENCE_SPAN_KIND]: OpenInferenceSpanKind.Agent,
         },
       },
       expect.any(Function),
