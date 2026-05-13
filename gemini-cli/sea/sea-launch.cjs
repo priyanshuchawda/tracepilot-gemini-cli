@@ -87,7 +87,7 @@ function verifyIntegrity(dir, manifest, fsMod = fs, cryptoMod = crypto) {
  * Prepares the runtime directory, extracting assets if necessary.
  * @param {object} manifest
  * @param {function} getAssetFn
- * @param {object} deps Dependencies (fs, os, path, processEnv)
+ * @param {object} deps Dependencies (fs, os, path, processEnv, platform)
  * @returns {string} The path to the prepared runtime directory.
  */
 function prepareRuntime(manifest, getAssetFn, deps = {}) {
@@ -98,6 +98,7 @@ function prepareRuntime(manifest, getAssetFn, deps = {}) {
   const processPid = deps.processPid || process.pid;
   const processUid =
     deps.processUid || (process.getuid ? process.getuid() : 'unknown');
+  const platform = deps.platform || process.platform;
 
   const version = manifest.version || '0.0.0';
   const safeVersion = getSafeName(version);
@@ -108,7 +109,7 @@ function prepareRuntime(manifest, getAssetFn, deps = {}) {
 
   let tempBase = osMod.tmpdir();
 
-  if (process.platform === 'win32' && processEnv.LOCALAPPDATA) {
+  if (platform === 'win32' && processEnv.LOCALAPPDATA) {
     const appDir = pathMod.join(processEnv.LOCALAPPDATA, 'Google', 'GeminiCLI');
     try {
       if (!fsMod.existsSync(appDir)) {
@@ -134,7 +135,7 @@ function prepareRuntime(manifest, getAssetFn, deps = {}) {
       if (!stat.isDirectory()) return false;
       if (processUid !== 'unknown' && stat.uid !== processUid) return false;
       // Skip strict permission check on Windows as it's unreliable with standard fs.stat
-      if (process.platform !== 'win32' && (stat.mode & 0o777) !== 0o700)
+      if (platform !== 'win32' && (stat.mode & 0o777) !== 0o700)
         return false;
       return true;
     } catch {
