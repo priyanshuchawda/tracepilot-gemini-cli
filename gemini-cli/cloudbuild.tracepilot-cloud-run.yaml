@@ -1,0 +1,15 @@
+substitutions:
+  _IMAGE: gcr.io/$PROJECT_ID/tracepilot-cloud-run:manual
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.tracepilot-cloud-run
+      - -t
+      - $_IMAGE
+      - .
+
+images:
+  - $_IMAGE
