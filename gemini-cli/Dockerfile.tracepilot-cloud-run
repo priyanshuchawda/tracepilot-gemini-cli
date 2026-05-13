@@ -1,0 +1,38 @@
+# ---- TracePilot Cloud Run Demo ----
+FROM docker.io/library/node:20-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  git \
+  ca-certificates \
+  python3 \
+  make \
+  g++ \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package*.json ./
+COPY packages/cli/package*.json ./packages/cli/
+COPY packages/core/package*.json ./packages/core/
+COPY packages/vscode-ide-companion/package*.json ./packages/vscode-ide-companion/
+COPY packages/vscode-ide-companion/scripts/ ./packages/vscode-ide-companion/scripts/
+COPY packages/devtools/package*.json ./packages/devtools/
+COPY packages/sdk/package*.json ./packages/sdk/
+COPY packages/test-utils/package*.json ./packages/test-utils/
+COPY packages/a2a-server/package*.json ./packages/a2a-server/
+
+RUN HUSKY=0 npm ci --ignore-scripts
+
+COPY . .
+
+RUN HUSKY=0 npm run build
+
+ENV NODE_ENV=production
+ENV PORT=8080
+ENV TRACEPILOT_ENABLE_DEMO_RUNS=false
+
+EXPOSE 8080
+
+CMD ["node", "scripts/tracepilot-cloud-run-server.mjs"]
+

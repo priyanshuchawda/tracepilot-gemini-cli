@@ -7,6 +7,9 @@ designed to prevent demo polish from hiding unverified Phoenix integration.
 
 - `npm ci` completed on a clean checkout.
 - `npm run ci:tracepilot` passes.
+- `npm run smoke:cloud-run:local` passes.
+- `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` passes against the
+  actual judging URL.
 - `npm run smoke:phoenix` passes with real Phoenix credentials.
 - `npm run smoke:phoenix:mcp` passes and reports the smoke span as visible and
   queryable.
@@ -56,6 +59,35 @@ Expected result:
 - patch is applied
 - retry test passes
 - eval JSON reports all deterministic evals passing
+
+## Hosted Demo Link
+
+Use the Cloud Run status surface as the stable hosted project URL:
+
+```bash
+npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --region asia-south1 --service tracepilot-url-proof
+npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"
+```
+
+Current verified Cloud Run URL:
+
+```text
+https://tracepilot-url-proof-1051094454693.asia-south1.run.app
+```
+
+For cheap default operation, the deploy helper configures min instances as zero
+and max instances as one. The hosted service exposes only fixed demo/status
+endpoints and never returns raw secret values. Keep
+`TRACEPILOT_ENABLE_DEMO_RUNS=false` for the public judging link unless you are
+running a controlled live demo.
+
+Before sharing the link, verify:
+
+- `/api/health` returns `ok: true`
+- `/api/status` returns env presence booleans only
+- `/api/demo` reports the deterministic repair path
+- the smoke output contains no API key, bearer token, private key, or `.env`
+  content
 
 ## Sanitized Transcript Rules
 
