@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Config } from '../config/config.js';
 import type { ErroredToolCall } from '../scheduler/types.js';
 import { MCPServerStatus, type McpClient } from '../tools/mcp-client.js';
@@ -13,6 +15,8 @@ import { getErrorMessage } from '../utils/errors.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
 import {
   GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_MCP_SERVER,
+  GEMINI_CLI_MCP_TOOL,
   GEMINI_CLI_OUTPUT_PREVIEW,
   GEMINI_CLI_OUTPUT_SHA256,
   GeminiCliOperation,
@@ -23,7 +27,15 @@ import { flushTelemetry } from './sdk.js';
 import { runInDevTraceSpan } from './trace.js';
 
 const PHOENIX_MCP_TOOL_NAME = 'get-spans';
-const DEFAULT_TIMEOUT_MS = 2000;
+const DEFAULT_TIMEOUT_MS = 20000;
+const DIRECT_PHOENIX_MCP_SERVER_NAME = 'tracepilot-phoenix-env';
+
+interface PhoenixMcpToolResult {
+  llmContent?: unknown;
+  returnDisplay?: unknown;
+  data?: unknown;
+  error?: { message: string };
+}
 
 export interface PhoenixTraceEvidence {
   spanName?: string;
@@ -82,39 +94,57 @@ export async function queryPhoenixForFailedToolCall(
         status: call.status,
       };
 
-      const manager = config.getMcpClientManager();
-      const clientInfo = findPhoenixMcpClient(manager);
-      if (!clientInfo) {
+      const args = buildPhoenixGetSpansArgs(config.getSessionId());
+      const phoenixQuery = getPhoenixMcpQuery(config, args);
+      if (!phoenixQuery) {
         const result: PhoenixSelfIntrospectionResult = {
           attempted: false,
           available: false,
-          reason: 'Phoenix MCP client unavailable or disconnected.',
+          reason:
+            'Phoenix MCP client unavailable or PHOENIX_API_KEY/PHOENIX_PROJECT/Phoenix host env is missing.',
         };
         metadata.output = result;
         return result;
       }
 
-      const phoenixTool = findPhoenixGetSpansTool(
-        config,
-        clientInfo.serverName,
-      );
-      if (!phoenixTool) {
-        const result: PhoenixSelfIntrospectionResult = {
-          attempted: true,
-          available: false,
-          reason: `Phoenix MCP server '${clientInfo.serverName}' does not expose a ${PHOENIX_MCP_TOOL_NAME} tool.`,
-        };
-        metadata.output = result;
-        return result;
-      }
-
-      const args = buildPhoenixGetSpansArgs(config.getSessionId());
       try {
         const controller = new AbortController();
-        const toolResult = await withTimeout(
-          phoenixTool.buildAndExecute(args, controller.signal),
-          timeoutMs,
-          () => controller.abort(),
+        const toolResult = await runInDevTraceSpan(
+          {
+            operation: GeminiCliOperation.ToolPhoenixMcp,
+            logPrompts: config.getTelemetryLogPromptsEnabled(),
+            tracesEnabled: config.getTelemetryTracesEnabled(),
+            sessionId: config.getSessionId(),
+            attributes: {
+              [GEN_AI_TOOL_NAME]: PHOENIX_MCP_TOOL_NAME,
+              [GEMINI_CLI_MCP_SERVER]: phoenixQuery.serverName,
+              [GEMINI_CLI_MCP_TOOL]: PHOENIX_MCP_TOOL_NAME,
+            },
+          },
+          async ({ metadata }) => {
+            metadata.input = {
+              serverName: phoenixQuery.serverName,
+              toolName: PHOENIX_MCP_TOOL_NAME,
+              args,
+            };
+
+            const result = await withTimeout(
+              phoenixQuery.execute(controller.signal),
+              timeoutMs,
+              () => controller.abort(),
+            );
+
+            if (result.error) {
+              metadata.error = result.error;
+              metadata.output = {
+                status: 'error',
+                message: result.error.message,
+              };
+            } else {
+              metadata.output = { status: 'ok' };
+            }
+            return result;
+          },
         );
         if (toolResult.error) {
           throw new Error(toolResult.error.message);
@@ -143,6 +173,100 @@ export async function queryPhoenixForFailedToolCall(
       }
     },
   );
+}
+
+function getPhoenixMcpQuery(
+  config: Config,
+  args: Record<string, unknown>,
+):
+  | {
+      serverName: string;
+      execute: (signal: AbortSignal) => Promise<PhoenixMcpToolResult>;
+    }
+  | undefined {
+  const manager = config.getMcpClientManager();
+  const clientInfo = findPhoenixMcpClient(manager);
+  if (clientInfo) {
+    const phoenixTool = findPhoenixGetSpansTool(config, clientInfo.serverName);
+    if (phoenixTool) {
+      return {
+        serverName: clientInfo.serverName,
+        execute: (signal) => phoenixTool.buildAndExecute(args, signal),
+      };
+    }
+  }
+
+  const directConfig = resolveDirectPhoenixMcpConfig(process.env);
+  if (!directConfig) {
+    return undefined;
+  }
+
+  return {
+    serverName: DIRECT_PHOENIX_MCP_SERVER_NAME,
+    execute: () => callDirectPhoenixMcpGetSpans(args, directConfig),
+  };
+}
+
+interface DirectPhoenixMcpConfig {
+  host: string;
+  project: string;
+  apiKey: string;
+}
+
+function resolveDirectPhoenixMcpConfig(
+  env: NodeJS.ProcessEnv,
+): DirectPhoenixMcpConfig | undefined {
+  const apiKey = env['PHOENIX_API_KEY']?.trim();
+  const project = env['PHOENIX_PROJECT']?.trim();
+  const host = resolvePhoenixMcpHost(env);
+  if (!apiKey || !project || !host) {
+    return undefined;
+  }
+  return { apiKey, project, host };
+}
+
+async function callDirectPhoenixMcpGetSpans(
+  args: Record<string, unknown>,
+  directConfig: DirectPhoenixMcpConfig,
+): Promise<PhoenixMcpToolResult> {
+  const transport = new StdioClientTransport({
+    command: 'npx',
+    args: ['-y', '@arizeai/phoenix-mcp@latest'],
+    env: {
+      ...process.env,
+      PHOENIX_API_KEY: directConfig.apiKey,
+      PHOENIX_HOST: directConfig.host,
+      PHOENIX_PROJECT: directConfig.project,
+    },
+  });
+  const client = new Client({
+    name: 'tracepilot-phoenix-self-introspection',
+    version: '0.0.0',
+  });
+
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({
+      name: PHOENIX_MCP_TOOL_NAME,
+      arguments: args,
+    });
+    const text = getTextContent(result);
+    if (result.isError) {
+      return {
+        error: {
+          message: text || 'Phoenix MCP get-spans returned an error.',
+        },
+      };
+    }
+    const parsed = parseJsonText(text);
+    return {
+      llmContent: parsed ?? text,
+      returnDisplay: '',
+      data: parsed,
+    };
+  } finally {
+    await client.close().catch(() => undefined);
+  }
 }
 
 export function buildTraceRepairEvidenceText(
@@ -222,6 +346,67 @@ function buildPhoenixGetSpansArgs(sessionId: string): Record<string, unknown> {
     args['project_identifier'] = process.env['PHOENIX_PROJECT'];
   }
   return args;
+}
+
+function resolvePhoenixMcpHost(env: NodeJS.ProcessEnv): string | undefined {
+  return [
+    env['PHOENIX_HOST'],
+    env['PHOENIX_BASE_URL'],
+    env['PHOENIX_COLLECTOR_ENDPOINT'],
+  ]
+    .map(normalizePhoenixUrl)
+    .find((value): value is string => value !== undefined);
+}
+
+function normalizePhoenixUrl(value: string | undefined): string | undefined {
+  const trimmed = String(value ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    url.search = '';
+    url.hash = '';
+    url.pathname = url.pathname
+      .replace(/\/+$/, '')
+      .replace(/\/v1\/traces$/i, '')
+      .replace(/\/v1$/i, '');
+    return url.toString().replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+function getTextContent(result: unknown): string {
+  const record = getRecord(result);
+  const content = Array.isArray(record?.['content']) ? record['content'] : [];
+  return content
+    .map((part) => getRecord(part))
+    .filter(
+      (part): part is Record<string, unknown> => part?.['type'] === 'text',
+    )
+    .map((part) => getString(part, 'text') ?? '')
+    .join('\n');
+}
+
+function parseJsonText(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(text.slice(start, end + 1)) as unknown;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
 }
 
 async function withTimeout<T>(

@@ -1236,6 +1236,105 @@ describe('Scheduler (Orchestrator)', () => {
       );
     });
 
+    it('attaches Phoenix repair evidence to non-zero shell exits without changing the tool contract', async () => {
+      const request: ToolCallRequestInfo = {
+        ...req1,
+        name: 'run_shell_command',
+        args: { command: 'npm test' },
+      };
+      const mockResponse = {
+        callId: 'call-1',
+        responseParts: [
+          {
+            functionResponse: {
+              id: 'call-1',
+              name: 'run_shell_command',
+              response: {
+                output: 'Output: failing test\nExit Code: 1',
+              },
+            },
+          },
+        ],
+        resultDisplay: 'Command exited with code: 1',
+        error: undefined,
+        errorType: undefined,
+        data: { exitCode: 1, isError: true },
+      } as ToolCallResponseInfo;
+      const introspectionResult = {
+        attempted: true,
+        available: true,
+        evidence: {
+          spanName: 'gemini_cli.tool.shell',
+          exitCode: 1,
+          outputPreview: 'test failed',
+          outputSha256: 'hash',
+        },
+      };
+      queryPhoenixForFailedToolCall.mockResolvedValue(introspectionResult);
+      buildTraceRepairEvidenceText.mockReturnValue(
+        'TracePilot Phoenix evidence for repair plan:\nspan=gemini_cli.tool.shell',
+      );
+      const repairPlan = {
+        created: true,
+        source: 'phoenix_trace',
+        failedToolName: 'run_shell_command',
+        failedCommand: 'npm test',
+        commandRiskLevel: 'low',
+        traceEvidenceAvailable: true,
+        referencedTraceEvidence: true,
+        failureEvidence: introspectionResult.evidence,
+        proposedFix: 'Use the trace evidence.',
+        verificationCommand: 'npm test',
+        text: 'TracePilot repair plan:\nfailed_command=npm test\noutput_sha256=hash',
+      };
+      buildTraceEvidenceRepairPlan.mockResolvedValue(repairPlan);
+
+      mockExecutor.execute.mockResolvedValue({
+        status: CoreToolCallStatus.Success,
+        request,
+        response: mockResponse,
+      } as unknown as SuccessfulToolCall);
+
+      await scheduler.schedule(request, signal);
+
+      expect(queryPhoenixForFailedToolCall).toHaveBeenCalledWith(
+        mockConfig,
+        expect.objectContaining({
+          status: CoreToolCallStatus.Error,
+          request,
+          response: expect.objectContaining({
+            errorType: ToolErrorType.SHELL_EXECUTE_ERROR,
+          }),
+        }),
+      );
+      expect(mockStateManager.updateStatus).toHaveBeenCalledWith(
+        'call-1',
+        CoreToolCallStatus.Success,
+        expect.objectContaining({
+          error: undefined,
+          errorType: undefined,
+          data: expect.objectContaining({
+            exitCode: 1,
+            isError: true,
+            tracepilotSelfIntrospection: introspectionResult,
+            tracepilotRepairPlan: repairPlan,
+          }),
+          responseParts: [
+            expect.objectContaining({
+              functionResponse: expect.objectContaining({
+                response: expect.objectContaining({
+                  tracepilot_self_introspection:
+                    'TracePilot Phoenix evidence for repair plan:\nspan=gemini_cli.tool.shell',
+                  tracepilot_repair_plan:
+                    'TracePilot repair plan:\nfailed_command=npm test\noutput_sha256=hash',
+                }),
+              }),
+            }),
+          ],
+        }),
+      );
+    });
+
     it('should log telemetry for terminal states in the queue processor', async () => {
       const mockResponse = {
         callId: 'call-1',

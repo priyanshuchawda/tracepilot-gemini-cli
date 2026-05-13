@@ -232,9 +232,10 @@ describe('validateNonInterActiveAuth', () => {
     expect(debugLoggerErrorSpy).not.toHaveBeenCalled();
   });
 
-  it('uses configuredAuthType over environment variables', async () => {
+  it('uses environment auth over configured interactive auth in headless mode', async () => {
     process.env['GEMINI_API_KEY'] = 'fake-key';
     const nonInteractiveConfig = createLocalMockConfig({});
+    const validateAuthMethodSpy = vi.spyOn(auth, 'validateAuthMethod');
     await validateNonInteractiveAuth(
       AuthType.LOGIN_WITH_GOOGLE,
       undefined,
@@ -243,6 +244,7 @@ describe('validateNonInterActiveAuth', () => {
     );
     expect(processExitSpy).not.toHaveBeenCalled();
     expect(debugLoggerErrorSpy).not.toHaveBeenCalled();
+    expect(validateAuthMethodSpy).toHaveBeenCalledWith(AuthType.USE_GEMINI);
   });
 
   it('exits if validateAuthMethod returns error', async () => {

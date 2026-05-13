@@ -14,8 +14,11 @@ import { ToolErrorType } from '../tools/tool-error.js';
 import { SHELL_TOOL_NAME } from '../tools/tool-names.js';
 import {
   GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_MCP_SERVER,
+  GEMINI_CLI_MCP_TOOL,
   GEMINI_CLI_OUTPUT_PREVIEW,
   GEMINI_CLI_OUTPUT_SHA256,
+  GeminiCliOperation,
   GEN_AI_TOOL_NAME,
 } from './constants.js';
 import {
@@ -27,6 +30,12 @@ const flushTelemetry = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const runInDevTraceSpan = vi.hoisted(() =>
   vi.fn(async (_opts, fn) => fn({ metadata: { attributes: {} } })),
 );
+const mcpClient = vi.hoisted(() => ({
+  close: vi.fn().mockResolvedValue(undefined),
+  connect: vi.fn().mockResolvedValue(undefined),
+  callTool: vi.fn(),
+}));
+const stdioTransport = vi.hoisted(() => vi.fn((options) => ({ options })));
 
 vi.mock('./sdk.js', () => ({
   flushTelemetry,
@@ -36,9 +45,21 @@ vi.mock('./trace.js', () => ({
   runInDevTraceSpan,
 }));
 
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: vi.fn(() => mcpClient),
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  StdioClientTransport: stdioTransport,
+}));
+
 describe('phoenix self introspection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    mcpClient.close.mockResolvedValue(undefined);
+    mcpClient.connect.mockResolvedValue(undefined);
+    mcpClient.callTool.mockReset();
   });
 
   it('degrades clearly when Phoenix MCP is unavailable', async () => {
@@ -156,6 +177,100 @@ describe('phoenix self introspection', () => {
         limit: 20,
       }),
       expect.any(AbortSignal),
+    );
+    expect(runInDevTraceSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: GeminiCliOperation.ToolPhoenixMcp,
+        sessionId: 'session-1',
+        attributes: expect.objectContaining({
+          [GEMINI_CLI_MCP_SERVER]: 'phoenix',
+          [GEMINI_CLI_MCP_TOOL]: 'get-spans',
+          [GEN_AI_TOOL_NAME]: 'get-spans',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('queries Phoenix MCP directly from env when no configured MCP client exists', async () => {
+    vi.stubEnv('PHOENIX_API_KEY', 'phx_test_key');
+    vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');
+    vi.stubEnv(
+      'PHOENIX_BASE_URL',
+      'https://app.phoenix.arize.com/s/YOUR_SPACE',
+    );
+    vi.stubEnv(
+      'PHOENIX_COLLECTOR_ENDPOINT',
+      'https://app.phoenix.arize.com/s/test-space/v1/traces',
+    );
+    mcpClient.callTool.mockResolvedValue({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            spans: [
+              {
+                name: 'gemini_cli.tool.shell',
+                attributes: {
+                  [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+                  [GEMINI_CLI_COMMAND_EXIT_CODE]: 1,
+                  [GEMINI_CLI_OUTPUT_PREVIEW]: 'AssertionError: expected URL',
+                  [GEMINI_CLI_OUTPUT_SHA256]: 'hash123',
+                },
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => undefined,
+    } as unknown as Config;
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: {
+        spanName: 'gemini_cli.tool.shell',
+        exitCode: 1,
+        outputSha256: 'hash123',
+      },
+    });
+    expect(stdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'npx',
+        args: ['-y', '@arizeai/phoenix-mcp@latest'],
+        env: expect.objectContaining({
+          PHOENIX_API_KEY: 'phx_test_key',
+          PHOENIX_HOST: 'https://app.phoenix.arize.com/s/test-space',
+          PHOENIX_PROJECT: 'tracepilot-test',
+        }),
+      }),
+    );
+    expect(mcpClient.callTool).toHaveBeenCalledWith({
+      name: 'get-spans',
+      arguments: expect.objectContaining({
+        project_identifier: 'tracepilot-test',
+        session_id: 'session-1',
+      }),
+    });
+    expect(runInDevTraceSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: GeminiCliOperation.ToolPhoenixMcp,
+        attributes: expect.objectContaining({
+          [GEMINI_CLI_MCP_SERVER]: 'tracepilot-phoenix-env',
+          [GEMINI_CLI_MCP_TOOL]: 'get-spans',
+        }),
+      }),
+      expect.any(Function),
     );
   });
 

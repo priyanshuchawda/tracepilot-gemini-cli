@@ -26,7 +26,10 @@ import {
   type ScheduledToolCall,
 } from './types.js';
 import { ToolErrorType } from '../tools/tool-error.js';
-import { UPDATE_TOPIC_TOOL_NAME } from '../tools/tool-names.js';
+import {
+  SHELL_TOOL_NAME,
+  UPDATE_TOPIC_TOOL_NAME,
+} from '../tools/tool-names.js';
 import { PolicyDecision, type ApprovalMode } from '../policy/types.js';
 import {
   ToolConfirmationOutcome,
@@ -924,11 +927,10 @@ export class Scheduler {
     }
 
     if (result.status === CoreToolCallStatus.Success) {
-      this.state.updateStatus(
-        callId,
-        CoreToolCallStatus.Success,
-        result.response,
-      );
+      const response = isNonZeroShellResult(result)
+        ? await this._addPhoenixSelfIntrospectionToShellFailureResponse(result)
+        : result.response;
+      this.state.updateStatus(callId, CoreToolCallStatus.Success, response);
     } else if (result.status === CoreToolCallStatus.Cancelled) {
       this.state.updateStatus(
         callId,
@@ -1006,6 +1008,26 @@ export class Scheduler {
     };
   }
 
+  private async _addPhoenixSelfIntrospectionToShellFailureResponse(
+    result: SuccessfulToolCall,
+  ): Promise<ToolCallResponseInfo> {
+    const exitCode = getResponseExitCode(result.response);
+    const response = await this._addPhoenixSelfIntrospectionToErrorResponse({
+      ...result,
+      status: CoreToolCallStatus.Error,
+      response: {
+        ...result.response,
+        error: new Error(`Shell command exited with code ${exitCode}`),
+        errorType: ToolErrorType.SHELL_EXECUTE_ERROR,
+      },
+    });
+    return {
+      ...response,
+      error: result.response.error,
+      errorType: result.response.errorType,
+    };
+  }
+
   private _processNextInRequestQueue() {
     if (this.requestQueue.length > 0) {
       const next = this.requestQueue.shift()!;
@@ -1014,4 +1036,19 @@ export class Scheduler {
         .catch(next.reject);
     }
   }
+}
+
+function isNonZeroShellResult(result: SuccessfulToolCall): boolean {
+  return (
+    result.request?.name === SHELL_TOOL_NAME &&
+    (result.response.data?.['isError'] === true ||
+      (getResponseExitCode(result.response) ?? 0) !== 0)
+  );
+}
+
+function getResponseExitCode(
+  response: ToolCallResponseInfo,
+): number | undefined {
+  const exitCode = response.data?.['exitCode'];
+  return typeof exitCode === 'number' ? exitCode : undefined;
 }

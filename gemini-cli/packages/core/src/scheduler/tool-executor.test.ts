@@ -243,6 +243,57 @@ describe('ToolExecutor', () => {
     ).not.toContain('sk-proj-shouldBeRedacted');
   });
 
+  it('marks non-zero shell exit spans as errors even when shell output is returned to the model', async () => {
+    const mockTool = new MockTool({
+      name: SHELL_TOOL_NAME,
+      description: 'Shell command',
+    });
+    const invocation = mockTool.build({ command: 'npm test' });
+
+    vi.mocked(coreToolHookTriggers.executeToolWithHooks).mockResolvedValue({
+      llmContent: 'Output: failing test\nExit Code: 1',
+      returnDisplay: 'failing test',
+      data: { exitCode: 1, isError: true },
+    } as ToolResult);
+
+    const scheduledCall: ScheduledToolCall = {
+      status: CoreToolCallStatus.Scheduled,
+      request: {
+        callId: 'call-shell-nonzero',
+        name: SHELL_TOOL_NAME,
+        args: { command: 'npm test' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-shell-nonzero',
+      },
+      tool: mockTool,
+      invocation: invocation as unknown as AnyToolInvocation,
+      startTime: Date.now(),
+    };
+
+    const result = await executor.execute({
+      call: scheduledCall,
+      signal: new AbortController().signal,
+      onUpdateToolCall: vi.fn(),
+    });
+
+    expect(result.status).toBe(CoreToolCallStatus.Success);
+
+    const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
+    const fn = spanArgs[1];
+    const metadata = { attributes: {} as Record<string, unknown> };
+    await fn({ metadata });
+
+    expect(metadata).toMatchObject({
+      error: expect.any(Error),
+      attributes: expect.objectContaining({
+        [GEMINI_CLI_COMMAND_EXIT_CODE]: 1,
+      }),
+      output: expect.objectContaining({
+        status: CoreToolCallStatus.Success,
+      }),
+    });
+  });
+
   it.each([READ_FILE_TOOL_NAME, WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME])(
     'emits a file tool span with safe file metadata for %s',
     async (fileToolName) => {

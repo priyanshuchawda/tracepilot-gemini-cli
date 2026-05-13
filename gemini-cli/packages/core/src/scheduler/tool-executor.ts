@@ -327,6 +327,14 @@ export class ToolExecutor {
         const exitCode = getToolExitCode(toolResult);
         if (exitCode !== undefined) {
           spanMetadata.attributes[GEMINI_CLI_COMMAND_EXIT_CODE] = exitCode;
+          if (
+            exitCode !== 0 &&
+            completedToolCall.status !== CoreToolCallStatus.Error
+          ) {
+            spanMetadata.error = new Error(
+              `Shell command exited with code ${exitCode}`,
+            );
+          }
         }
 
         if (completedToolCall.status === CoreToolCallStatus.Error) {
