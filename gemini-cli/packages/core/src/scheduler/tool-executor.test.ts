@@ -14,7 +14,13 @@ import {
 import { makeFakeConfig } from '../test-utils/config.js';
 import { MockTool } from '../test-utils/mock-tool.js';
 import { CoreToolCallStatus, type ScheduledToolCall } from './types.js';
-import { SHELL_TOOL_NAME } from '../tools/tool-names.js';
+import {
+  EDIT_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+} from '../tools/tool-names.js';
+import { ToolErrorType } from '../tools/tool-error.js';
 import { DiscoveredMCPTool } from '../tools/mcp-tool.js';
 import type { CallableTool } from '@google/genai';
 import * as fileUtils from '../utils/fileUtils.js';
@@ -22,6 +28,15 @@ import * as coreToolHookTriggers from '../core/coreToolHookTriggers.js';
 import { ShellToolInvocation } from '../tools/shell.js';
 import { createMockMessageBus } from '../test-utils/mock-message-bus.js';
 import {
+  GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_COMMAND_RISK_LEVEL,
+  GEMINI_CLI_FILE_PATH,
+  GEMINI_CLI_MCP_SERVER,
+  GEMINI_CLI_MCP_TOOL,
+  GEMINI_CLI_OUTPUT_PREVIEW,
+  GEMINI_CLI_OUTPUT_REDACTED,
+  GEMINI_CLI_OUTPUT_SHA256,
+  GEMINI_CLI_TOOL_KIND,
   GeminiCliOperation,
   GEN_AI_TOOL_CALL_ID,
   GEN_AI_TOOL_DESCRIPTION,
@@ -141,16 +156,212 @@ describe('ToolExecutor', () => {
 
     const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
     const fn = spanArgs[1];
-    const metadata = { attributes: {} };
+    const metadata = { attributes: {} as Record<string, unknown> };
     await fn({ metadata });
     expect(metadata).toMatchObject({
       input: scheduledCall.request,
       output: {
-        ...result,
+        status: result.status,
         durationMs: expect.any(Number),
-        endTime: expect.any(Number),
+        outputPreview: 'Tool output',
+        outputSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        outputTruncated: false,
+        outputRedacted: false,
       },
     });
+  });
+
+  it('emits a shell tool span with exit code and safe output evidence', async () => {
+    const mockTool = new MockTool({
+      name: SHELL_TOOL_NAME,
+      description: 'Shell command',
+    });
+    const invocation = mockTool.build({ command: 'npm test' });
+
+    vi.mocked(coreToolHookTriggers.executeToolWithHooks).mockResolvedValue({
+      llmContent:
+        'Output: failing test\nOPENAI_API_KEY=sk-proj-shouldBeRedacted000000\nExit Code: 2',
+      returnDisplay:
+        'failing test\nOPENAI_API_KEY=sk-proj-shouldBeRedacted000000',
+      data: { exitCode: 2, isError: true },
+      error: {
+        message: 'Command exited with code 2',
+        type: ToolErrorType.SHELL_EXECUTE_ERROR,
+      },
+    } as ToolResult);
+
+    const scheduledCall: ScheduledToolCall = {
+      status: CoreToolCallStatus.Scheduled,
+      request: {
+        callId: 'call-shell',
+        name: SHELL_TOOL_NAME,
+        args: { command: 'npm test' },
+        isClientInitiated: false,
+        prompt_id: 'prompt-shell',
+      },
+      tool: mockTool,
+      invocation: invocation as unknown as AnyToolInvocation,
+      startTime: Date.now(),
+    };
+
+    await executor.execute({
+      call: scheduledCall,
+      signal: new AbortController().signal,
+      onUpdateToolCall: vi.fn(),
+    });
+
+    expect(runInDevTraceSpan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: GeminiCliOperation.ToolShell,
+        attributes: expect.objectContaining({
+          [GEMINI_CLI_TOOL_KIND]: 'shell',
+          [GEMINI_CLI_COMMAND_RISK_LEVEL]: 'low',
+          [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+        }),
+      }),
+      expect.any(Function),
+    );
+
+    const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
+    const fn = spanArgs[1];
+    const metadata = { attributes: {} as Record<string, unknown> };
+    await fn({ metadata });
+
+    expect(metadata).toMatchObject({
+      attributes: expect.objectContaining({
+        [GEMINI_CLI_COMMAND_EXIT_CODE]: 2,
+        [GEMINI_CLI_OUTPUT_SHA256]: expect.stringMatching(/^[a-f0-9]{64}$/),
+        [GEMINI_CLI_OUTPUT_REDACTED]: true,
+      }),
+      output: expect.objectContaining({
+        status: CoreToolCallStatus.Error,
+        outputPreview: expect.stringContaining('[REDACTED]'),
+      }),
+    });
+    expect(
+      String(metadata.attributes[GEMINI_CLI_OUTPUT_PREVIEW]),
+    ).not.toContain('sk-proj-shouldBeRedacted');
+  });
+
+  it.each([READ_FILE_TOOL_NAME, WRITE_FILE_TOOL_NAME, EDIT_TOOL_NAME])(
+    'emits a file tool span with safe file metadata for %s',
+    async (fileToolName) => {
+      const mockTool = new MockTool({
+        name: fileToolName,
+        description: 'File tool',
+      });
+      const invocation = mockTool.build({ file_path: 'src/app.ts' });
+
+      vi.mocked(coreToolHookTriggers.executeToolWithHooks).mockResolvedValue({
+        llmContent: 'const token = "ghp_shouldBeRedacted000000000000";',
+        returnDisplay: 'file result',
+      } as ToolResult);
+
+      const scheduledCall: ScheduledToolCall = {
+        status: CoreToolCallStatus.Scheduled,
+        request: {
+          callId: `call-${fileToolName}`,
+          name: fileToolName,
+          args: { file_path: 'src/app.ts' },
+          isClientInitiated: false,
+          prompt_id: `prompt-${fileToolName}`,
+        },
+        tool: mockTool,
+        invocation: invocation as unknown as AnyToolInvocation,
+        startTime: Date.now(),
+      };
+
+      await executor.execute({
+        call: scheduledCall,
+        signal: new AbortController().signal,
+        onUpdateToolCall: vi.fn(),
+      });
+
+      expect(runInDevTraceSpan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          operation: GeminiCliOperation.ToolFile,
+          attributes: expect.objectContaining({
+            [GEMINI_CLI_TOOL_KIND]: 'file',
+            [GEMINI_CLI_FILE_PATH]: 'src/app.ts',
+            [GEN_AI_TOOL_NAME]: fileToolName,
+          }),
+        }),
+        expect.any(Function),
+      );
+    },
+  );
+
+  it('emits generic and Phoenix MCP tool spans', async () => {
+    const messageBus = createMockMessageBus();
+    const genericMcpTool = new DiscoveredMCPTool(
+      {} as CallableTool,
+      'filesystem',
+      'read_file',
+      'Generic MCP tool',
+      {},
+      messageBus,
+    );
+    const phoenixMcpTool = new DiscoveredMCPTool(
+      {} as CallableTool,
+      'phoenix',
+      'get_spans',
+      'Phoenix MCP tool',
+      {},
+      messageBus,
+    );
+
+    vi.mocked(coreToolHookTriggers.executeToolWithHooks).mockResolvedValue({
+      llmContent: [{ text: 'mcp result' }],
+      returnDisplay: 'mcp result',
+    } as ToolResult);
+
+    for (const [tool, callId] of [
+      [genericMcpTool, 'call-mcp-generic'],
+      [phoenixMcpTool, 'call-mcp-phoenix'],
+    ] as const) {
+      await executor.execute({
+        call: {
+          status: CoreToolCallStatus.Scheduled,
+          request: {
+            callId,
+            name: tool.getFullyQualifiedName(),
+            args: {},
+            isClientInitiated: false,
+            prompt_id: `prompt-${callId}`,
+          },
+          tool,
+          invocation: tool.build({}) as unknown as AnyToolInvocation,
+          startTime: Date.now(),
+        },
+        signal: new AbortController().signal,
+        onUpdateToolCall: vi.fn(),
+      });
+    }
+
+    expect(runInDevTraceSpan).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        operation: GeminiCliOperation.ToolMcp,
+        attributes: expect.objectContaining({
+          [GEMINI_CLI_TOOL_KIND]: 'mcp',
+          [GEMINI_CLI_MCP_SERVER]: 'filesystem',
+          [GEMINI_CLI_MCP_TOOL]: 'read_file',
+        }),
+      }),
+      expect.any(Function),
+    );
+    expect(runInDevTraceSpan).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        operation: GeminiCliOperation.ToolPhoenixMcp,
+        attributes: expect.objectContaining({
+          [GEMINI_CLI_TOOL_KIND]: 'phoenix_mcp',
+          [GEMINI_CLI_MCP_SERVER]: 'phoenix',
+          [GEMINI_CLI_MCP_TOOL]: 'get_spans',
+        }),
+      }),
+      expect.any(Function),
+    );
   });
 
   it('should handle execution errors', async () => {
@@ -204,7 +415,7 @@ describe('ToolExecutor', () => {
 
     const spanArgs = vi.mocked(runInDevTraceSpan).mock.calls[0];
     const fn = spanArgs[1];
-    const metadata = { attributes: {} };
+    const metadata = { attributes: {} as Record<string, unknown> };
     await fn({ metadata });
     expect(metadata).toMatchObject({
       error: new Error('Tool Failed'),
