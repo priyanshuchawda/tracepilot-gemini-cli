@@ -40,6 +40,7 @@ import {
   buildTraceRepairEvidenceText,
   queryPhoenixForFailedToolCall,
 } from '../telemetry/phoenixSelfIntrospection.js';
+import { buildTraceEvidenceRepairPlan } from '../tracepilot/repairPlanner.js';
 import { populateToolDisplay } from '../agent/tool-display-utils.js';
 import type { EditorType } from '../utils/editor.js';
 import {
@@ -950,6 +951,11 @@ export class Scheduler {
       result,
     );
     const evidenceText = buildTraceRepairEvidenceText(introspection);
+    const repairPlan = await buildTraceEvidenceRepairPlan(
+      this.config,
+      result,
+      introspection,
+    );
     const request = result.request ?? {
       callId: result.response.callId,
       name: 'unknown',
@@ -970,6 +976,7 @@ export class Scheduler {
                 response: {
                   ...part.functionResponse.response,
                   tracepilot_self_introspection: evidenceText,
+                  tracepilot_repair_plan: repairPlan.text,
                 },
               },
             };
@@ -982,6 +989,7 @@ export class Scheduler {
                 response: {
                   error: result.response.error?.message,
                   tracepilot_self_introspection: evidenceText,
+                  tracepilot_repair_plan: repairPlan.text,
                 },
               },
             },
@@ -993,6 +1001,7 @@ export class Scheduler {
       data: {
         ...result.response.data,
         tracepilotSelfIntrospection: introspection,
+        tracepilotRepairPlan: repairPlan,
       },
     };
   }
