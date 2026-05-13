@@ -77,6 +77,16 @@ Current verified Cloud Run URL:
 https://tracepilot-url-proof-1051094454693.asia-south1.run.app
 ```
 
+Latest strict evidence:
+
+- Cloud Run Secret Manager sync: passed.
+- Cloud Run live smoke: passed with Gemini and Phoenix configured.
+- Phoenix OTEL smoke: passed for session `tracepilot-smoke-1778699160858`.
+- Phoenix MCP smoke: passed for session `tracepilot-mcp-smoke-1778699158476`.
+- Strict broken-node demo: passed for session
+  `tracepilot-broken-node-app-1778699160588`.
+- Strict demo trace evidence: `de13112b1dadd28dda63a83365d92344`.
+
 For cheap default operation, the deploy helper configures min instances as zero
 and max instances as one. The hosted service exposes only fixed demo/status
 endpoints and never returns raw secret values. Keep
