@@ -68,6 +68,8 @@
     "prepare:package": "node scripts/prepare-package.js",
     "release:version": "node scripts/version.js",
     "telemetry": "node scripts/telemetry.js",
+    "smoke:phoenix": "node scripts/phoenix-smoke.mjs",
+    "smoke:phoenix:mcp": "node scripts/phoenix-mcp-smoke.mjs",
     "check:lockfile": "node scripts/check-lockfile.js",
     "clean": "node scripts/clean.js",
     "pre-commit": "node scripts/pre-commit.js"
