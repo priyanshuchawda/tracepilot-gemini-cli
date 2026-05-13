@@ -65,7 +65,9 @@ npm run demo:broken-node-app
 
 The offline demo proves the local deterministic path: failing test, safe failure
 evidence, repair plan, patch, rerun pass, and sanitized eval report. The strict
-demo also requires Phoenix trace visibility and Phoenix MCP queryability.
+demo also requires Phoenix trace visibility and Phoenix MCP queryability. Use
+the [release and demo checklist](tracepilot-release-demo-checklist.md) before
+recording or submitting demo evidence.
 
 ## Verification Matrix
 
