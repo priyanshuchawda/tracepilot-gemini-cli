@@ -32,6 +32,19 @@ export const OPENINFERENCE_SPAN_KIND = 'openinference.span.kind';
 
 export const GEMINI_CLI_OPERATION_KIND = 'gemini_cli.operation.kind';
 export const GEMINI_CLI_TURN_ID = 'gemini_cli.turn.id';
+export const GEMINI_CLI_TOOL_KIND = 'gemini_cli.tool.kind';
+export const GEMINI_CLI_COMMAND_RISK_LEVEL = 'gemini_cli.command.risk_level';
+export const GEMINI_CLI_COMMAND_EXIT_CODE = 'gemini_cli.command.exit_code';
+export const GEMINI_CLI_DURATION_MS = 'gemini_cli.duration_ms';
+export const GEMINI_CLI_OUTPUT_PREVIEW = 'gemini_cli.output.preview';
+export const GEMINI_CLI_OUTPUT_SHA256 = 'gemini_cli.output.sha256';
+export const GEMINI_CLI_OUTPUT_ORIGINAL_LENGTH =
+  'gemini_cli.output.original_length';
+export const GEMINI_CLI_OUTPUT_TRUNCATED = 'gemini_cli.output.truncated';
+export const GEMINI_CLI_OUTPUT_REDACTED = 'gemini_cli.output.redacted';
+export const GEMINI_CLI_FILE_PATH = 'gemini_cli.file.path';
+export const GEMINI_CLI_MCP_SERVER = 'gemini_cli.mcp.server';
+export const GEMINI_CLI_MCP_TOOL = 'gemini_cli.mcp.tool';
 
 export enum OpenInferenceSpanKind {
   Agent = 'AGENT',
@@ -43,6 +56,10 @@ export enum OpenInferenceSpanKind {
 // Gemini CLI specific operations
 export enum GeminiCliOperation {
   ToolCall = 'tool_call',
+  ToolShell = 'gemini_cli.tool.shell',
+  ToolFile = 'gemini_cli.tool.file',
+  ToolMcp = 'gemini_cli.tool.mcp',
+  ToolPhoenixMcp = 'gemini_cli.tool.phoenix_mcp',
   LLMCall = 'llm_call',
   LLMGenerate = 'gemini_cli.llm.generate',
   UserPrompt = 'user_prompt',

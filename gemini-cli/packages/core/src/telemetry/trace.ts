@@ -108,6 +108,10 @@ function getOpenInferenceSpanKind(
     case GeminiCliOperationValue.LLMGenerate:
     case GeminiCliOperationValue.LLMCall:
       return OpenInferenceSpanKind.Llm;
+    case GeminiCliOperationValue.ToolShell:
+    case GeminiCliOperationValue.ToolFile:
+    case GeminiCliOperationValue.ToolMcp:
+    case GeminiCliOperationValue.ToolPhoenixMcp:
     case GeminiCliOperationValue.ToolCall:
       return OpenInferenceSpanKind.Tool;
     case GeminiCliOperationValue.AgentTurn:

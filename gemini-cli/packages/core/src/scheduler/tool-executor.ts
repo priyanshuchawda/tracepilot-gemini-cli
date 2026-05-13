@@ -18,7 +18,12 @@ import {
   type ToolLiveOutput,
 } from '../index.js';
 import { isAbortError } from '../utils/errors.js';
-import { SHELL_TOOL_NAME } from '../tools/tool-names.js';
+import {
+  EDIT_TOOL_NAME,
+  READ_FILE_TOOL_NAME,
+  SHELL_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+} from '../tools/tool-names.js';
 import { DiscoveredMCPTool } from '../tools/mcp-tool.js';
 import { ToolOutputDistillationService } from '../context/toolDistillationService.js';
 import { executeToolWithHooks } from '../core/coreToolHookTriggers.js';
@@ -39,10 +44,153 @@ import {
 import type { PartListUnion, Part } from '@google/genai';
 import {
   GeminiCliOperation,
+  GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_COMMAND_RISK_LEVEL,
+  GEMINI_CLI_DURATION_MS,
+  GEMINI_CLI_FILE_PATH,
+  GEMINI_CLI_MCP_SERVER,
+  GEMINI_CLI_MCP_TOOL,
+  GEMINI_CLI_OUTPUT_ORIGINAL_LENGTH,
+  GEMINI_CLI_OUTPUT_PREVIEW,
+  GEMINI_CLI_OUTPUT_REDACTED,
+  GEMINI_CLI_OUTPUT_SHA256,
+  GEMINI_CLI_OUTPUT_TRUNCATED,
+  GEMINI_CLI_TOOL_KIND,
   GEN_AI_TOOL_CALL_ID,
   GEN_AI_TOOL_DESCRIPTION,
   GEN_AI_TOOL_NAME,
 } from '../telemetry/constants.js';
+import { safeJsonStringify } from '../utils/safeJsonStringify.js';
+import { createRedactedOutputPreview } from '../telemetry/sanitize.js';
+
+const FILE_TOOL_NAMES = new Set<string>([
+  READ_FILE_TOOL_NAME,
+  WRITE_FILE_TOOL_NAME,
+  EDIT_TOOL_NAME,
+]);
+
+function getStringArg(
+  args: ToolCallRequestInfo['args'],
+  key: string,
+): string | undefined {
+  if (typeof args !== 'object' || args === null) {
+    return undefined;
+  }
+  const value = args[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function classifyShellCommandRisk(command: string | undefined): string {
+  const normalized = (command ?? '').trim().toLowerCase();
+  if (!normalized) {
+    return 'unknown';
+  }
+  if (
+    /\brm\s+-rf\s+(?:\/|~|\$home|\$env:userprofile)\b/.test(normalized) ||
+    /\b(?:printenv|env|set)\b/.test(normalized) ||
+    /\bcat\s+\.env\b/.test(normalized)
+  ) {
+    return 'blocked';
+  }
+  if (
+    /\bgit\s+push\b/.test(normalized) ||
+    /\b(?:deploy|chmod|chown)\b/.test(normalized) ||
+    /\brm\s+-rf\b/.test(normalized)
+  ) {
+    return 'high';
+  }
+  if (
+    /\b(?:npm|pnpm|yarn)\s+(?:install|add|update|upgrade)\b/.test(normalized) ||
+    /\b(?:npm|pnpm|yarn)\s+run\s+(?:format|fix|lint:fix)\b/.test(normalized)
+  ) {
+    return 'medium';
+  }
+  if (
+    /^(?:pwd|ls|dir)(?:\s|$)/.test(normalized) ||
+    /^(?:grep|rg|cat)(?:\s|$)/.test(normalized) ||
+    /^(?:npm|pnpm|yarn)\s+(?:test|run\s+(?:build|test|typecheck|lint))(?:\s|$)/.test(
+      normalized,
+    )
+  ) {
+    return 'low';
+  }
+  return 'medium';
+}
+
+function getToolSpanInfo(
+  toolName: string,
+  tool: unknown,
+  args: ToolCallRequestInfo['args'],
+): {
+  operation: GeminiCliOperation;
+  attributes: Record<string, string>;
+} {
+  if (toolName === SHELL_TOOL_NAME) {
+    return {
+      operation: GeminiCliOperation.ToolShell,
+      attributes: {
+        [GEMINI_CLI_TOOL_KIND]: 'shell',
+        [GEMINI_CLI_COMMAND_RISK_LEVEL]: classifyShellCommandRisk(
+          getStringArg(args, 'command'),
+        ),
+      },
+    };
+  }
+
+  if (FILE_TOOL_NAMES.has(toolName)) {
+    const filePath = getStringArg(args, 'file_path');
+    return {
+      operation: GeminiCliOperation.ToolFile,
+      attributes: {
+        [GEMINI_CLI_TOOL_KIND]: 'file',
+        ...(filePath ? { [GEMINI_CLI_FILE_PATH]: filePath } : {}),
+      },
+    };
+  }
+
+  if (tool instanceof DiscoveredMCPTool) {
+    const isPhoenixMcp = tool.serverName.toLowerCase().includes('phoenix');
+    return {
+      operation: isPhoenixMcp
+        ? GeminiCliOperation.ToolPhoenixMcp
+        : GeminiCliOperation.ToolMcp,
+      attributes: {
+        [GEMINI_CLI_TOOL_KIND]: isPhoenixMcp ? 'phoenix_mcp' : 'mcp',
+        [GEMINI_CLI_MCP_SERVER]: tool.serverName,
+        [GEMINI_CLI_MCP_TOOL]: tool.serverToolName,
+      },
+    };
+  }
+
+  return {
+    operation: GeminiCliOperation.ToolCall,
+    attributes: {
+      [GEMINI_CLI_TOOL_KIND]: 'generic',
+    },
+  };
+}
+
+function toolResultToOutputText(toolResult: ToolResult | undefined): string {
+  if (!toolResult) {
+    return '';
+  }
+  const content = toolResult.llmContent ?? toolResult.returnDisplay;
+  if (typeof content === 'string') {
+    return content;
+  }
+  return safeJsonStringify(content);
+}
+
+function getToolExitCode(
+  toolResult: ToolResult | undefined,
+): number | undefined {
+  const data = toolResult?.data;
+  if (typeof data !== 'object' || data === null) {
+    return undefined;
+  }
+  const exitCode = data['exitCode'];
+  return typeof exitCode === 'number' ? exitCode : undefined;
+}
 
 export interface ToolExecutionContext {
   call: ToolCall;
@@ -80,14 +228,16 @@ export class ToolExecutor {
         : undefined;
 
     const shellExecutionConfig = this.config.getShellExecutionConfig();
+    const toolSpanInfo = getToolSpanInfo(toolName, tool, request.args);
 
     return runInDevTraceSpan(
       {
-        operation: GeminiCliOperation.ToolCall,
+        operation: toolSpanInfo.operation,
         logPrompts: this.config.getTelemetryLogPromptsEnabled(),
         tracesEnabled: this.config.getTelemetryTracesEnabled(),
         sessionId: this.config.getSessionId(),
         attributes: {
+          ...toolSpanInfo.attributes,
           [GEN_AI_TOOL_NAME]: toolName,
           [GEN_AI_TOOL_CALL_ID]: callId,
           [GEN_AI_TOOL_DESCRIPTION]: tool.description,
@@ -97,6 +247,8 @@ export class ToolExecutor {
         spanMetadata.input = request;
 
         let completedToolCall: CompletedToolCall;
+        let toolResult: ToolResult | undefined;
+        const executionStartTime = Date.now();
 
         try {
           const setExecutionIdCallback = (executionId: number) => {
@@ -123,7 +275,7 @@ export class ToolExecutor {
             true, // skipBeforeHook
           );
 
-          const toolResult: ToolResult = await promise;
+          toolResult = await promise;
 
           if (call.request.inputModifiedByHook) {
             const modificationMsg = `\n\n[System] Tool input parameters were modified by a hook before execution.`;
@@ -191,7 +343,46 @@ export class ToolExecutor {
           }
         }
 
-        spanMetadata.output = completedToolCall;
+        const durationMs =
+          completedToolCall.durationMs ?? Date.now() - executionStartTime;
+        const outputPreview = createRedactedOutputPreview(
+          toolResultToOutputText(toolResult),
+        );
+        spanMetadata.attributes[GEMINI_CLI_DURATION_MS] = durationMs;
+        spanMetadata.attributes[GEMINI_CLI_OUTPUT_PREVIEW] =
+          outputPreview.preview;
+        spanMetadata.attributes[GEMINI_CLI_OUTPUT_SHA256] =
+          outputPreview.sha256;
+        spanMetadata.attributes[GEMINI_CLI_OUTPUT_ORIGINAL_LENGTH] =
+          outputPreview.originalLength;
+        spanMetadata.attributes[GEMINI_CLI_OUTPUT_TRUNCATED] =
+          outputPreview.truncated;
+        spanMetadata.attributes[GEMINI_CLI_OUTPUT_REDACTED] =
+          outputPreview.redacted;
+
+        const exitCode = getToolExitCode(toolResult);
+        if (exitCode !== undefined) {
+          spanMetadata.attributes[GEMINI_CLI_COMMAND_EXIT_CODE] = exitCode;
+        }
+
+        if (completedToolCall.status === CoreToolCallStatus.Error) {
+          spanMetadata.error =
+            completedToolCall.response.error ??
+            new Error(
+              completedToolCall.response.errorType ?? 'Tool execution failed',
+            );
+        }
+
+        spanMetadata.output = {
+          status: completedToolCall.status,
+          durationMs,
+          errorType: completedToolCall.response.errorType,
+          errorMessage: completedToolCall.response.error?.message,
+          outputPreview: outputPreview.preview,
+          outputSha256: outputPreview.sha256,
+          outputTruncated: outputPreview.truncated,
+          outputRedacted: outputPreview.redacted,
+        };
         return completedToolCall;
       },
     );
