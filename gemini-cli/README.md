@@ -1,4 +1,112 @@
-# Gemini CLI
+# TracePilot Gemini CLI
+
+TracePilot is a fork of Gemini CLI that adds Phoenix/OpenTelemetry
+observability, OpenInference span names, Phoenix MCP self-introspection,
+redaction, deterministic evals, command safety gates, and a broken-repo repair
+demo. The upstream Gemini CLI documentation below still applies for the base
+agent runtime; this section records what has been verified in this fork.
+
+## TracePilot Status
+
+### What Works Locally
+
+- Gemini CLI builds, lints, and typechecks in this repository.
+- Phoenix OTEL initialization is wired through `@arizeai/phoenix-otel` when
+  Phoenix environment variables are present.
+- Agent, LLM, shell, file, MCP, Phoenix MCP, self-introspection, repair-plan,
+  and eval paths emit TracePilot/OpenInference-oriented spans.
+- Tool output previews are redacted and truncated before they are attached to
+  traces, eval reports, or repair evidence.
+- The command safety gate blocks destructive or credential-dumping commands and
+  requires confirmation for high-risk commands.
+- Deterministic TracePilot evals write machine-readable JSON.
+- `examples/broken-node-app` has an offline demo path that proves the local
+  fail-plan-fix-rerun flow without requiring Phoenix Cloud.
+
+### Experimental Or External-Service Dependent
+
+- Phoenix trace visibility and Phoenix MCP querying require real Phoenix Cloud
+  configuration. A Phoenix package being installed or telemetry initializing is
+  not enough; use `npm run smoke:phoenix:mcp` to prove spans are visible and
+  queryable.
+- Full end-to-end self-improvement is only complete when Phoenix MCP returns the
+  failed span for the same session. In this workspace that proof is blocked
+  until `PHOENIX_HOST` points at a real Phoenix Cloud space.
+- The broken-node demo can run offline with `--allow-missing-phoenix`, but the
+  strict demo intentionally fails if Phoenix visibility/queryability is missing.
+
+### Required Environment
+
+Copy `.env.example` and set real values locally. Do not commit secrets.
+
+```bash
+GEMINI_API_KEY=...
+PHOENIX_API_KEY=...
+PHOENIX_HOST=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
+PHOENIX_BASE_URL=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
+PHOENIX_COLLECTOR_ENDPOINT=
+PHOENIX_PROJECT=tracepilot-gemini-cli
+```
+
+`PHOENIX_HOST` is used by Phoenix MCP. `PHOENIX_BASE_URL` or
+`PHOENIX_COLLECTOR_ENDPOINT` is used by OTEL export. For Phoenix Cloud, keep the
+host/base URL pointed at the same space and set the project name you expect to
+query.
+
+### Local Verification
+
+Use focused slices for day-to-day work; the full root test suite is long.
+
+```bash
+npm ci
+npm run lint
+npm run typecheck
+npm run build
+npx vitest run --coverage=false packages/core/src/telemetry/phoenixSelfIntrospection.test.ts packages/core/src/tracepilot/repairPlanner.test.ts
+npx vitest run --coverage=false packages/core/src/policy/shell-safety.test.ts packages/core/src/policy/tracepilot-command-risk.test.ts
+npm run test:scripts
+```
+
+Phoenix smoke checks:
+
+```bash
+npm run smoke:phoenix
+npm run smoke:phoenix:mcp
+```
+
+Demo checks:
+
+```bash
+npm run demo:broken-node-app:offline
+npm run demo:broken-node-app
+```
+
+The offline demo should pass local repair evidence while reporting that Phoenix
+visibility/queryability is unavailable. The strict demo should pass only with a
+working Phoenix collector and Phoenix MCP configuration.
+
+### Verification Matrix
+
+| Feature                        | Command/test                                                                          | Current status                   | Evidence                                                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Baseline install               | `npm ci`                                                                              | Working                          | Passed in baseline health check.                                                                                                                       |
+| Build                          | `npm run build`                                                                       | Working                          | Passed for issues #11, #12, and #13. Build rewrites generated git-commit files; restore them before committing if needed.                              |
+| Lint                           | `npm run lint`                                                                        | Working                          | Passed for issues #11, #12, and #13.                                                                                                                   |
+| Typecheck                      | `npm run typecheck`                                                                   | Working                          | Passed for issues #11, #12, and #13.                                                                                                                   |
+| Full root tests                | `npm test`                                                                            | Unverified/long                  | Root test run exceeded the local 30 minute budget during audit; use focused slices until CI is hardened.                                               |
+| Phoenix OTEL init/export smoke | `npm run smoke:phoenix`                                                               | Working when Phoenix env is set  | Smoke script creates and flushes a TracePilot span; requires `PHOENIX_API_KEY` plus collector/base URL.                                                |
+| Phoenix MCP visibility         | `npm run smoke:phoenix:mcp`                                                           | Blocked without real Phoenix env | MCP package starts, but span visibility/querying requires `PHOENIX_API_KEY`, a real Phoenix Cloud host, and project.                                   |
+| Agent/LLM spans                | Core telemetry tests                                                                  | Working                          | `gemini_cli.agent_turn` and `gemini_cli.llm.generate` span paths are covered.                                                                          |
+| Shell/file/MCP spans           | Scheduler/tool tests                                                                  | Working                          | Tool spans include safe metadata, risk, output preview/hash, and Phoenix MCP specialization.                                                           |
+| Redaction                      | `packages/core/src/telemetry/sanitize.test.ts` and eval/demo tests                    | Working for implemented patterns | Secrets are redacted before trace/eval/demo previews.                                                                                                  |
+| Command safety gate            | `packages/core/src/policy/shell-safety.test.ts` and `tracepilot-command-risk.test.ts` | Working                          | Blocks `rm -rf /`, `.env` reads, env dumps, and recursive secret searches; high-risk commands ask for confirmation.                                    |
+| Self-introspection             | `packages/core/src/telemetry/phoenixSelfIntrospection.test.ts` and scheduler tests    | Partial                          | Failure path flushes telemetry, attempts Phoenix MCP, attaches evidence or an unavailable reason. Real Phoenix evidence is external-service dependent. |
+| Repair planner                 | `packages/core/src/tracepilot/repairPlanner.test.ts`                                  | Working locally                  | Planner consumes structured trace evidence, emits `gemini_cli.chain.repair_plan`, and degrades when evidence is unavailable.                           |
+| Deterministic evals            | `npm run test:scripts`                                                                | Working locally                  | Eval runner writes sanitized JSON and checks required deterministic eval IDs.                                                                          |
+| Broken repo demo               | `npm run demo:broken-node-app:offline`                                                | Working locally                  | Proves failing test, local repair, rerun pass, sanitized report. Strict Phoenix-backed demo depends on Phoenix MCP visibility.                         |
+
+See [docs/tracepilot.md](docs/tracepilot.md) for the same status in a
+task-focused format.
 
 [![Gemini CLI CI](https://github.com/google-gemini/gemini-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/google-gemini/gemini-cli/actions/workflows/ci.yml)
 [![Gemini CLI E2E (Chained)](https://github.com/google-gemini/gemini-cli/actions/workflows/chained_e2e.yml/badge.svg)](https://github.com/google-gemini/gemini-cli/actions/workflows/chained_e2e.yml)
