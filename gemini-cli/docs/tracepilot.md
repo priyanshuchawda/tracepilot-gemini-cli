@@ -108,11 +108,9 @@ gcloud config set project priyanshu-portfolio-458519
 npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --region asia-south1 --service tracepilot-url-proof --secret GEMINI_API_KEY=GEMINI_API_KEY --secret PHOENIX_API_KEY=PHOENIX_API_KEY
 ```
 
-Current verified Cloud Run URL:
-
-```text
-https://tracepilot-url-proof-1051094454693.asia-south1.run.app
-```
+Current hosted status: not deployed. The earlier Cloud Run proof was removed to
+avoid carrying a live service before final submission. Redeploy with the command
+above and re-run the live smoke before sharing a public judging URL.
 
 If you want the hosted service to run the deterministic repair demo, redeploy
 with `--enable-demo-runs`. Keep it disabled for public judging links unless you
@@ -153,7 +151,7 @@ Do not paste keys into issue comments, PR descriptions, or terminal logs.
 | Evals                  | `npm run test:scripts`                                      | Working locally                  | Required deterministic eval IDs produce sanitized JSON.                                                       |
 | Broken demo            | `npm run demo:broken-node-app`                              | Working                          | Strict demo passed with Phoenix-visible trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals. |
 | Cloud Run local smoke  | `npm run smoke:cloud-run:local`                             | Working locally                  | Verifies health/status/demo endpoints without requiring Phoenix secrets.                                      |
-| Cloud Run live smoke   | `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` | Working                          | Passed against `https://tracepilot-url-proof-1051094454693.asia-south1.run.app`.                              |
+| Cloud Run live smoke   | `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` | Not currently deployed           | User intentionally removed Cloud Run for now; redeploy and re-run smoke before sharing a URL.                 |
 
 ## Latest Strict Proof
 
@@ -164,9 +162,6 @@ not print raw secret values:
   passed.
 - `npm run secrets:tracepilot-cloud-run -- --project priyanshu-portfolio-458519`:
   passed and synced `GEMINI_API_KEY` plus `PHOENIX_API_KEY` to Secret Manager.
-- `npm run smoke:cloud-run -- --url https://tracepilot-url-proof-1051094454693.asia-south1.run.app`:
-  passed with `cloudRunDetected`, `geminiConfigured`, and `phoenixConfigured`
-  all true.
 - `npm run smoke:phoenix`: passed for session `tracepilot-smoke-1778699160858`.
 - `npm run smoke:phoenix:mcp`: passed for session
   `tracepilot-mcp-smoke-1778699158476`; Phoenix MCP found trace
