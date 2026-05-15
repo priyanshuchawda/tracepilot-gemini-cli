@@ -1,9 +1,9 @@
 ---
 name: TracePilot fix
 about: Small implementation, test, or documentation fix for TracePilot
-title: ""
-labels: ""
-assignees: ""
+title: ''
+labels: ''
+assignees: ''
 ---
 
 ## Problem

@@ -4,8 +4,9 @@ TracePilot is a forked Gemini CLI TypeScript agent runtime with Phoenix
 observability, OpenInference-style spans, Phoenix MCP self-introspection, safety
 gates, redaction, deterministic evals, and a broken-repo repair demo.
 
-The core project lives in [`gemini-cli/`](gemini-cli/). This repository root is
-kept as the GitHub landing page and project map for reviewers.
+The TypeScript monorepo now lives at the repository root so reviewers can see
+the actual project immediately: `package.json`, `packages/`, `docs/`,
+`examples/`, `scripts/`, and `.github/` are all top-level.
 
 ## What It Proves
 
@@ -42,40 +43,38 @@ redeploying and re-running the hosted smoke test.
 |-- AGENT.md                  # Operating rules for coding agents
 |-- PLAN.md                   # Original TracePilot implementation plan
 |-- docs.md                   # Phoenix/OpenInference research notes
-|-- .github/                  # Issue and PR templates
-`-- gemini-cli/               # Actual TypeScript monorepo
-    |-- packages/
-    |   |-- cli/              # Gemini CLI terminal package
-    |   |-- core/             # Agent runtime, tools, scheduler, telemetry
-    |   |-- test-utils/       # Shared test helpers
-    |   `-- vscode-ide-companion/
-    |-- packages/core/src/
-    |   |-- telemetry/        # Phoenix OTEL, redaction, spans, MCP query
-    |   |-- tracepilot/       # Repair planner and deterministic evals
-    |   |-- policy/           # Command safety and risk classification
-    |   |-- scheduler/        # Agent turn and tool execution path
-    |   `-- tools/            # Shell, file, MCP, and related tools
-    |-- examples/
-    |   `-- broken-node-app/  # Fail-plan-fix-rerun demo fixture
-    |-- scripts/              # Smoke tests, evals, demos, deploy helpers
-    |-- docs/                 # TracePilot verification and Gemini CLI docs
-    `-- cloudbuild.tracepilot-cloud-run.yaml
+|-- .github/                  # Workflows, issue templates, PR template
+|-- packages/
+|   |-- cli/                  # Gemini CLI terminal package
+|   |-- core/                 # Agent runtime, tools, scheduler, telemetry
+|   |-- test-utils/           # Shared test helpers
+|   `-- vscode-ide-companion/
+|-- packages/core/src/
+|   |-- telemetry/            # Phoenix OTEL, redaction, spans, MCP query
+|   |-- tracepilot/           # Repair planner and deterministic evals
+|   |-- policy/               # Command safety and risk classification
+|   |-- scheduler/            # Agent turn and tool execution path
+|   `-- tools/                # Shell, file, MCP, and related tools
+|-- examples/
+|   `-- broken-node-app/      # Fail-plan-fix-rerun demo fixture
+|-- scripts/                  # Smoke tests, evals, demos, deploy helpers
+|-- docs/                     # TracePilot verification and Gemini CLI docs
+`-- cloudbuild.tracepilot-cloud-run.yaml
 ```
 
 ## Key Links
 
-- [TracePilot implementation README](gemini-cli/README.md)
-- [Verification guide](gemini-cli/docs/tracepilot.md)
-- [Release and demo checklist](gemini-cli/docs/tracepilot-release-demo-checklist.md)
-- [Broken demo fixture](gemini-cli/examples/broken-node-app)
-- [Telemetry code](gemini-cli/packages/core/src/telemetry)
-- [Repair and eval code](gemini-cli/packages/core/src/tracepilot)
-- [Command safety policy](gemini-cli/packages/core/src/policy)
+- [Verification guide](docs/tracepilot.md)
+- [Release and demo checklist](docs/tracepilot-release-demo-checklist.md)
+- [Full implementation README snapshot](docs/tracepilot-implementation-readme.md)
+- [Broken demo fixture](examples/broken-node-app)
+- [Telemetry code](packages/core/src/telemetry)
+- [Repair and eval code](packages/core/src/tracepilot)
+- [Command safety policy](packages/core/src/policy)
 
 ## Quick Start
 
 ```bash
-cd gemini-cli
 npm ci
 npm run lint
 npm run typecheck
@@ -85,7 +84,6 @@ npm run build
 Focused TracePilot checks:
 
 ```bash
-cd gemini-cli
 npm run smoke:phoenix
 npm run smoke:phoenix:mcp
 npm run demo:broken-node-app
@@ -98,8 +96,7 @@ exit codes, and short redacted tails on failure.
 
 ## Environment
 
-Copy [`gemini-cli/.env.example`](gemini-cli/.env.example) and set real values
-locally:
+Copy [`.env.example`](.env.example) and set real values locally:
 
 ```bash
 GEMINI_API_KEY=...
@@ -110,9 +107,9 @@ PHOENIX_COLLECTOR_ENDPOINT=
 PHOENIX_PROJECT=tracepilot-gemini-cli
 ```
 
-Never commit `.env` files, API keys, bearer tokens, private keys, or full command
-outputs containing secrets. Any credential pasted into chat or transcripts
-should be rotated before public submission.
+Never commit `.env` files, API keys, bearer tokens, private keys, or full
+command outputs containing secrets. Any credential pasted into chat or
+transcripts should be rotated before public submission.
 
 ## Current Status
 
