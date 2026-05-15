@@ -1,0 +1,23 @@
+# Root-local dependencies and generated output
+node_modules/
+
+# Agent logs and scratch space
+.ai-logs/
+.ai-tmp/
+gemini-cli/.ai-logs/
+gemini-cli/.ai-tmp/
+
+# Secrets
+.env
+.env.*
+!.env.example
+gemini-cli/.env
+gemini-cli/.env.*
+!gemini-cli/.env.example
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+
