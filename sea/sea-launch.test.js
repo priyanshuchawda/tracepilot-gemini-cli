@@ -705,7 +705,6 @@ describe('sea-launch', () => {
         'C:\\Users\\User\\AppData\\Local\\Google\\GeminiCLI',
         expect.objectContaining({ recursive: true }),
       );
-
     });
 
     it('falls back to tmpdir on Windows if LOCALAPPDATA is missing', () => {
@@ -760,7 +759,6 @@ describe('sea-launch', () => {
       // Should use tmpdir
       expect(runtime).toContain('C:\\Temp');
       expect(runtime).not.toContain('Google\\GeminiCLI');
-
     });
 
     it('falls back to tmpdir on Windows if mkdir fails', () => {
@@ -824,7 +822,6 @@ describe('sea-launch', () => {
         expect.stringContaining('Google\\GeminiCLI'),
         expect.anything(),
       );
-
     });
   });
 });
