@@ -62,7 +62,8 @@ Expected result:
 
 ## Hosted Demo Link
 
-Use the Cloud Run status surface as the stable hosted project URL:
+The Cloud Run status surface is available as a deployable judging URL, but it is
+not currently live. Redeploy it only when you are ready to share a public link:
 
 ```bash
 npm run secrets:tracepilot-cloud-run -- --dry-run --project priyanshu-portfolio-458519
@@ -71,16 +72,15 @@ npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --re
 npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"
 ```
 
-Current verified Cloud Run URL:
-
-```text
-https://tracepilot-url-proof-1051094454693.asia-south1.run.app
-```
+Current hosted status: not deployed. Re-run the live smoke command after
+redeploying and paste only the URL, never secrets, into the final submission
+materials.
 
 Latest strict evidence:
 
 - Cloud Run Secret Manager sync: passed.
-- Cloud Run live smoke: passed with Gemini and Phoenix configured.
+- Cloud Run live smoke: previously passed, but the service has since been
+  removed; redeploy and verify again before judging.
 - Phoenix OTEL smoke: passed for session `tracepilot-smoke-1778699160858`.
 - Phoenix MCP smoke: passed for session `tracepilot-mcp-smoke-1778699158476`.
 - Strict broken-node demo: passed for session
@@ -130,17 +130,13 @@ redact any tenant, account, token, or unrelated trace data.
 
 ## Current Blocker
 
-Strict end-to-end demo proof is blocked until real Phoenix environment values
-are available:
+Strict Phoenix proof is available from the recorded smoke/demo sessions above.
+The current blocker for a public hosted URL is only Cloud Run redeployment. When
+you are ready to share a live link, rotate any credentials that were pasted into
+chat or transcripts, sync them to Secret Manager, deploy, and run:
 
 ```bash
-PHOENIX_API_KEY=...
-PHOENIX_HOST=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
-PHOENIX_BASE_URL=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
-PHOENIX_PROJECT=tracepilot-gemini-cli
-npm run smoke:phoenix:mcp
+npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"
 ```
 
-If `PHOENIX_HOST` is not set, the smoke/demo scripts can derive the Phoenix MCP
-host from `PHOENIX_BASE_URL` or from a Phoenix Cloud-style
-`PHOENIX_COLLECTOR_ENDPOINT`.
+Do not claim hosted readiness until that smoke passes against the new live URL.

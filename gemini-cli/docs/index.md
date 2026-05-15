@@ -14,6 +14,10 @@ npm install -g @google/gemini-cli
 
 Jump in to Gemini CLI.
 
+- **[TracePilot verification](./tracepilot.md):** Verified Phoenix, MCP, Cloud
+  Run, safety, eval, and broken-repo repair evidence for this fork.
+- **[TracePilot release demo checklist](./tracepilot-release-demo-checklist.md):**
+  Exact checks to run before recording or submitting the demo.
 - **[Quickstart](./get-started/index.md):** Your first session with Gemini CLI.
 - **[Installation](./get-started/installation.mdx):** How to install Gemini CLI
   on your system.

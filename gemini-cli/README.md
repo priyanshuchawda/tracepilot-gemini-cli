@@ -1,40 +1,110 @@
 # TracePilot Gemini CLI
 
-TracePilot is a fork of Gemini CLI that adds Phoenix/OpenTelemetry
-observability, OpenInference span names, Phoenix MCP self-introspection,
-redaction, deterministic evals, command safety gates, and a broken-repo repair
-demo. The upstream Gemini CLI documentation below still applies for the base
-agent runtime; this section records what has been verified in this fork.
+TracePilot is a Gemini CLI fork that turns agent debugging into an observable
+repair loop. It keeps the Gemini CLI agent runtime, then adds Phoenix
+OpenTelemetry tracing, OpenInference-oriented spans, Phoenix MCP
+self-introspection, redaction, deterministic evals, command safety gates, and a
+broken-repo repair demo that proves the loop end to end.
+
+Cloud deployment note: this repo includes a cheap Cloud Run status/demo surface
+and Secret Manager deploy helpers, but no live Cloud Run URL is claimed in the
+README right now. Redeploy and re-run the hosted smoke before using a public
+judging link.
+
+## What TracePilot Proves
+
+The strict verified flow is:
+
+1. A broken Node repo test fails.
+2. The failed command is traced as `gemini_cli.tool.shell`.
+3. The failure span is exported to Phoenix.
+4. TracePilot queries Phoenix through Phoenix MCP.
+5. The repair plan references Phoenix trace evidence.
+6. TracePilot applies the deterministic fix.
+7. The test reruns and passes.
+8. Deterministic eval JSON records command success, test pass, safety,
+   redaction, Phoenix trace creation, self-introspection, and repair success.
+
+Latest strict local/Phoenix evidence:
+
+- Phoenix OTEL smoke passed for session `tracepilot-smoke-1778699160858`.
+- Phoenix MCP smoke passed for session `tracepilot-mcp-smoke-1778699158476` and
+  trace `f3e4acf2ed12c206429ff4b82fbe0d00`.
+- Strict broken-node demo passed for session
+  `tracepilot-broken-node-app-1778699160588` and trace
+  `de13112b1dadd28dda63a83365d92344`.
+
+## Architecture Map
+
+- CLI/agent runtime: upstream Gemini CLI packages under `packages/cli` and
+  `packages/core`.
+- Agent turn and scheduler path: `packages/core/src/scheduler/scheduler.ts`.
+- LLM span path: `packages/core/src/core/client.ts` and telemetry helpers under
+  `packages/core/src/telemetry`.
+- Tool span path: `packages/core/src/scheduler/tool-executor.ts`.
+- Phoenix/OpenTelemetry setup: `packages/core/src/telemetry/sdk.ts`.
+- Phoenix MCP self-introspection:
+  `packages/core/src/telemetry/phoenixSelfIntrospection.ts`.
+- Repair planner: `packages/core/src/tracepilot/repairPlanner.ts`.
+- Deterministic evals: `packages/core/src/tracepilot/evals.ts` and
+  `scripts/tracepilot-evals.ts`.
+- Hosted proof surface: `scripts/tracepilot-cloud-run-server.mjs`,
+  `scripts/tracepilot-cloud-run-deploy.mjs`, and
+  `Dockerfile.tracepilot-cloud-run`.
+- Demo fixture: `examples/broken-node-app`.
+
+## Repository Structure
+
+```text
+.
+|-- packages/
+|   |-- cli/                  # Gemini CLI terminal package and entrypoints
+|   |-- core/                 # Agent runtime, scheduler, tools, telemetry
+|   |-- test-utils/           # Shared test helpers
+|   `-- vscode-ide-companion/ # Upstream IDE companion package
+|-- packages/core/src/
+|   |-- telemetry/            # Phoenix OTEL, redaction, span helpers, MCP query
+|   |-- tracepilot/           # Repair planner and deterministic evals
+|   |-- policy/               # Command risk and safety gate logic
+|   |-- scheduler/            # Agent turn and tool execution path
+|   `-- tools/                # Shell, file, MCP, and other tool implementations
+|-- examples/
+|   `-- broken-node-app/      # Deterministic fail-plan-fix-rerun demo fixture
+|-- scripts/                  # Smoke tests, demos, Cloud Run deploy/server tools
+|-- docs/                     # TracePilot evidence plus upstream Gemini CLI docs
+|-- integration-tests/        # Upstream integration test harness
+|-- .github/                  # GitHub workflows, issue templates, repo automation
+`-- cloudbuild.tracepilot-cloud-run.yaml
+```
 
 ## TracePilot Status
 
-### What Works Locally
+### Working
 
-- Gemini CLI builds, lints, and typechecks in this repository.
-- Phoenix OTEL initialization is wired through `@arizeai/phoenix-otel` when
-  Phoenix environment variables are present.
+- Gemini CLI builds, lints, and focused typecheck slices pass.
+- Phoenix OTEL export works with real Phoenix Cloud configuration.
+- Phoenix MCP visibility is proven by `npm run smoke:phoenix:mcp`.
 - Agent, LLM, shell, file, MCP, Phoenix MCP, self-introspection, repair-plan,
   and eval paths emit TracePilot/OpenInference-oriented spans.
-- Tool output previews are redacted and truncated before they are attached to
-  traces, eval reports, or repair evidence.
+- Tool output previews are redacted and truncated before they reach traces, eval
+  reports, or repair evidence.
 - The command safety gate blocks destructive or credential-dumping commands and
   requires confirmation for high-risk commands.
 - Deterministic TracePilot evals write machine-readable JSON.
-- `examples/broken-node-app` has an offline demo path that proves the local
-  fail-plan-fix-rerun flow without requiring Phoenix Cloud.
+- `examples/broken-node-app` proves both offline repair and strict
+  Phoenix-backed repair.
+- Cloud Run deploy/smoke tooling is present for later redeployment.
 
-### Experimental Or External-Service Dependent
+### Honest Limits
 
-- Phoenix trace visibility and Phoenix MCP querying require real Phoenix Cloud
-  configuration. A Phoenix package being installed or telemetry initializing is
-  not enough; use `npm run smoke:phoenix:mcp` to prove spans are visible and
-  queryable.
-- Full end-to-end self-improvement is only complete when Phoenix MCP returns the
-  failed span for the same session. That proof requires a real Phoenix Cloud
-  base URL from `PHOENIX_HOST`, `PHOENIX_BASE_URL`, or a Phoenix Cloud-style
-  `PHOENIX_COLLECTOR_ENDPOINT`.
-- The broken-node demo can run offline with `--allow-missing-phoenix`, but the
-  strict demo intentionally fails if Phoenix visibility/queryability is missing.
+- The repair planner is deterministic and evidence-driven; it is not a general
+  LLM judge.
+- Redaction is pattern-based and tested for implemented secret formats. It is
+  not a full DLP product.
+- Full root `npm test` is still long locally; use focused slices and CI gates.
+- Any key pasted into chat or logs should be treated as compromised and rotated
+  before final public submission.
+- Keep this fork private until the final submission package is ready.
 
 ### Required Environment
 
@@ -83,29 +153,38 @@ npm run demo:broken-node-app:offline
 npm run demo:broken-node-app
 ```
 
-The offline demo should pass local repair evidence while reporting that Phoenix
-visibility/queryability is unavailable. The strict demo should pass only with a
-working Phoenix collector and Phoenix MCP configuration.
+Hosted checks, after redeploying Cloud Run:
+
+```bash
+npm run smoke:cloud-run:local
+npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"
+```
+
+The offline demo proves the local repair path. The strict demo proves Phoenix
+export, Phoenix MCP queryability, trace-evidence repair planning, rerun pass,
+and eval logging.
 
 ### Verification Matrix
 
-| Feature                        | Command/test                                                                          | Current status                   | Evidence                                                                                                                                               |
-| ------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Baseline install               | `npm ci`                                                                              | Working                          | Passed in baseline health check.                                                                                                                       |
-| Build                          | `npm run build`                                                                       | Working                          | Passed for issues #11, #12, and #13. Build rewrites generated git-commit files; restore them before committing if needed.                              |
-| Lint                           | `npm run lint`                                                                        | Working                          | Passed for issues #11, #12, and #13.                                                                                                                   |
-| Typecheck                      | `npm run typecheck`                                                                   | Working                          | Passed for issues #11, #12, and #13.                                                                                                                   |
-| Full root tests                | `npm test`                                                                            | Unverified/long                  | Root test run exceeded the local 30 minute budget during audit; use focused slices until CI is hardened.                                               |
-| Phoenix OTEL init/export smoke | `npm run smoke:phoenix`                                                               | Working when Phoenix env is set  | Smoke script creates and flushes a TracePilot span; requires `PHOENIX_API_KEY` plus collector/base URL.                                                |
-| Phoenix MCP visibility         | `npm run smoke:phoenix:mcp`                                                           | Env-dependent                    | MCP package starts, but span visibility/querying requires `PHOENIX_API_KEY`, project, and a real Phoenix base URL or collector endpoint.               |
-| Agent/LLM spans                | Core telemetry tests                                                                  | Working                          | `gemini_cli.agent_turn` and `gemini_cli.llm.generate` span paths are covered.                                                                          |
-| Shell/file/MCP spans           | Scheduler/tool tests                                                                  | Working                          | Tool spans include safe metadata, risk, output preview/hash, and Phoenix MCP specialization.                                                           |
-| Redaction                      | `packages/core/src/telemetry/sanitize.test.ts` and eval/demo tests                    | Working for implemented patterns | Secrets are redacted before trace/eval/demo previews.                                                                                                  |
-| Command safety gate            | `packages/core/src/policy/shell-safety.test.ts` and `tracepilot-command-risk.test.ts` | Working                          | Blocks `rm -rf /`, `.env` reads, env dumps, and recursive secret searches; high-risk commands ask for confirmation.                                    |
-| Self-introspection             | `packages/core/src/telemetry/phoenixSelfIntrospection.test.ts` and scheduler tests    | Partial                          | Failure path flushes telemetry, attempts Phoenix MCP, attaches evidence or an unavailable reason. Real Phoenix evidence is external-service dependent. |
-| Repair planner                 | `packages/core/src/tracepilot/repairPlanner.test.ts`                                  | Working locally                  | Planner consumes structured trace evidence, emits `gemini_cli.chain.repair_plan`, and degrades when evidence is unavailable.                           |
-| Deterministic evals            | `npm run test:scripts`                                                                | Working locally                  | Eval runner writes sanitized JSON and checks required deterministic eval IDs.                                                                          |
-| Broken repo demo               | `npm run demo:broken-node-app:offline`                                                | Working locally                  | Proves failing test, local repair, rerun pass, sanitized report. Strict Phoenix-backed demo depends on Phoenix MCP visibility.                         |
+| Feature                        | Command/test                                                                          | Current status                   | Evidence                                                                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Baseline install               | `npm ci`                                                                              | Working                          | Passed in baseline health check.                                                                                             |
+| Build                          | `npm run build`                                                                       | Working                          | Passed for issues #11, #12, and #13. Build rewrites generated git-commit files; restore them before committing if needed.    |
+| Lint                           | `npm run lint`                                                                        | Working                          | Passed for issues #11, #12, and #13.                                                                                         |
+| Typecheck                      | `npm run typecheck`                                                                   | Working                          | Passed for issues #11, #12, and #13.                                                                                         |
+| Full root tests                | `npm test`                                                                            | Unverified/long                  | Root test run exceeded the local 30 minute budget during audit; use focused slices until CI is hardened.                     |
+| Phoenix OTEL init/export smoke | `npm run smoke:phoenix`                                                               | Working                          | Passed for session `tracepilot-smoke-1778699160858`.                                                                         |
+| Phoenix MCP visibility         | `npm run smoke:phoenix:mcp`                                                           | Working                          | Passed for session `tracepilot-mcp-smoke-1778699158476`; Phoenix MCP returned trace `f3e4acf2ed12c206429ff4b82fbe0d00`.      |
+| Agent/LLM spans                | Core telemetry tests                                                                  | Working                          | `gemini_cli.agent_turn` and `gemini_cli.llm.generate` span paths are covered.                                                |
+| Shell/file/MCP spans           | Scheduler/tool tests                                                                  | Working                          | Tool spans include safe metadata, risk, output preview/hash, and Phoenix MCP specialization.                                 |
+| Redaction                      | `packages/core/src/telemetry/sanitize.test.ts` and eval/demo tests                    | Working for implemented patterns | Secrets are redacted before trace/eval/demo previews.                                                                        |
+| Command safety gate            | `packages/core/src/policy/shell-safety.test.ts` and `tracepilot-command-risk.test.ts` | Working                          | Blocks `rm -rf /`, `.env` reads, env dumps, and recursive secret searches; high-risk commands ask for confirmation.          |
+| Self-introspection             | Phoenix MCP smoke, strict demo, and scheduler tests                                   | Working                          | Strict demo queried Phoenix MCP and attached trace evidence to the repair plan.                                              |
+| Repair planner                 | `packages/core/src/tracepilot/repairPlanner.test.ts`                                  | Working locally                  | Planner consumes structured trace evidence, emits `gemini_cli.chain.repair_plan`, and degrades when evidence is unavailable. |
+| Deterministic evals            | `npm run test:scripts`                                                                | Working locally                  | Eval runner writes sanitized JSON and checks required deterministic eval IDs.                                                |
+| Broken repo demo               | `npm run demo:broken-node-app`                                                        | Working                          | Strict demo passed with Phoenix trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals.                        |
+| Cloud Run local smoke          | `npm run smoke:cloud-run:local`                                                       | Working locally                  | Verifies the deployable health/status/demo surface without requiring a live service.                                         |
+| Hosted Cloud Run URL           | `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`                           | Not currently deployed           | User intentionally removed Cloud Run for now; redeploy later with the included cheap deploy helper before sharing a URL.     |
 
 See [docs/tracepilot.md](docs/tracepilot.md) for the same status in a
 task-focused format.
