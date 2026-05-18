@@ -50,8 +50,10 @@ jobs:
 
       - name: 'Upload TracePilot logs'
         if: '${{ always() }}'
+        continue-on-error: true
         uses: 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02'
         with:
           name: 'tracepilot-ci-logs'
           path: '.ai-logs/tracepilot-ci'
           if-no-files-found: 'ignore'
+          retention-days: 3
