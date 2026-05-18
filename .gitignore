@@ -65,6 +65,7 @@ gha-creds-*.json
 patch_output.log
 gemini-debug.log
 .ai-logs/
+.ai_runs/
 .ai-tmp/
 
 .genkit
