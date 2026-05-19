@@ -312,21 +312,36 @@ function quoteWindowsArg(value) {
 }
 
 function redactArgs(args) {
-  return args.map((arg) =>
-    String(arg)
-      .replace(/PHOENIX_PROJECT=[^,\s]+/g, 'PHOENIX_PROJECT=[VALUE]')
-      .replace(/PHOENIX_HOST=[^,\s]+/g, 'PHOENIX_HOST=[VALUE]')
-      .replace(/PHOENIX_BASE_URL=[^,\s]+/g, 'PHOENIX_BASE_URL=[VALUE]')
-      .replace(
-        /PHOENIX_COLLECTOR_ENDPOINT=[^,\s]+/g,
-        'PHOENIX_COLLECTOR_ENDPOINT=[VALUE]',
-      )
-      .replace(/=AIza[0-9A-Za-z_-]{20,}/g, '=[REDACTED]')
-      .replace(/=sk-[A-Za-z0-9_-]{16,}/g, '=[REDACTED]'),
-  );
+  return args.map((arg, index) => {
+    const text = String(arg);
+    if (String(args[index - 1]) === '--set-env-vars') {
+      return redactEnvVarList(text);
+    }
+    return redactSecretLikeText(text);
+  });
+}
+
+function redactEnvVarList(value) {
+  return String(value)
+    .split(',')
+    .map((entry) => {
+      const separatorIndex = entry.indexOf('=');
+      if (separatorIndex <= 0) {
+        return redactSecretLikeText(entry);
+      }
+      return `${entry.slice(0, separatorIndex)}=[VALUE]`;
+    })
+    .join(',');
 }
 
 function redactText(text) {
+  return redactSecretLikeText(String(text)).replace(
+    /\b([A-Z][A-Z0-9_]{2,})(=)([^,\s]+)/g,
+    '$1$2[VALUE]',
+  );
+}
+
+function redactSecretLikeText(text) {
   return String(text)
     .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED]')
     .replace(/sk-[A-Za-z0-9_-]{16,}/g, '[REDACTED]')

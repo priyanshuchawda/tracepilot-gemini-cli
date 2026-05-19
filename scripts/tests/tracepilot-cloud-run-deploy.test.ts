@@ -26,6 +26,8 @@ describe('scripts/tracepilot-cloud-run-deploy.mjs', () => {
         'https://app.phoenix.arize.com/s/demo-space',
         '--phoenix-collector-endpoint',
         'https://app.phoenix.arize.com/s/demo-space',
+        '--set-env',
+        'TRACEPILOT_INTERNAL_TOKEN=custom-secret-value-12345',
         '--secret',
         'GEMINI_API_KEY=GEMINI_API_KEY',
         '--secret',
@@ -54,5 +56,12 @@ describe('scripts/tracepilot-cloud-run-deploy.mjs', () => {
       ]),
     );
     expect(output).not.toContain('demo-space');
+    expect(output).not.toContain('custom-secret-value-12345');
+
+    const envArgIndex = result.deployArgs.indexOf('--set-env-vars');
+    expect(envArgIndex).toBeGreaterThanOrEqual(0);
+    const envArg = result.deployArgs[envArgIndex + 1];
+    expect(envArg).toContain('PHOENIX_HOST=[VALUE]');
+    expect(envArg).toContain('TRACEPILOT_INTERNAL_TOKEN=[VALUE]');
   });
 });
