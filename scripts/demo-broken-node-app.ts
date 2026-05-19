@@ -32,6 +32,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_API_BASE_URL = 'https://api.example.test';
+const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
 
 interface CliOptions {
   workdir: string;
@@ -314,7 +315,7 @@ async function queryPhoenixMcp(
 
   const transport = new StdioClientTransport({
     command: 'npx',
-    args: ['-y', '@arizeai/phoenix-mcp@latest'],
+    args: ['-y', resolvePhoenixMcpPackage()],
     env: {
       ...process.env,
       PHOENIX_HOST: host,
@@ -379,6 +380,13 @@ async function queryPhoenixMcp(
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+function resolvePhoenixMcpPackage(): string {
+  return (
+    process.env['TRACEPILOT_PHOENIX_MCP_PACKAGE']?.trim() ||
+    DEFAULT_PHOENIX_MCP_PACKAGE
+  );
 }
 
 function resolvePhoenixHost(): string | undefined {

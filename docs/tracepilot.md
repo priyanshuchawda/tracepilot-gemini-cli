@@ -15,12 +15,16 @@ PHOENIX_HOST=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
 PHOENIX_BASE_URL=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
 PHOENIX_COLLECTOR_ENDPOINT=
 PHOENIX_PROJECT=tracepilot-gemini-cli
+TRACEPILOT_PHOENIX_MCP_PACKAGE=
 ```
 
 Do not print these values in logs or prompts. Phoenix MCP needs a real Phoenix
 base URL; the smoke/demo scripts resolve it from `PHOENIX_HOST`,
 `PHOENIX_BASE_URL`, or a Phoenix Cloud-style `PHOENIX_COLLECTOR_ENDPOINT`.
 `PHOENIX_BASE_URL` or `PHOENIX_COLLECTOR_ENDPOINT` is required for OTEL export.
+Phoenix MCP launches use a pinned default `@arizeai/phoenix-mcp` package spec;
+set `TRACEPILOT_PHOENIX_MCP_PACKAGE` only when intentionally testing a
+controlled Phoenix MCP upgrade.
 
 ## Local Gates
 

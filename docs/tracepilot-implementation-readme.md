@@ -117,13 +117,17 @@ PHOENIX_HOST=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
 PHOENIX_BASE_URL=https://app.phoenix.arize.com/s/YOUR_REAL_SPACE
 PHOENIX_COLLECTOR_ENDPOINT=
 PHOENIX_PROJECT=tracepilot-gemini-cli
+TRACEPILOT_PHOENIX_MCP_PACKAGE=
 ```
 
 Phoenix MCP needs a real Phoenix base URL. TracePilot smoke/demo scripts resolve
 it from `PHOENIX_HOST`, `PHOENIX_BASE_URL`, or a Phoenix Cloud-style
 `PHOENIX_COLLECTOR_ENDPOINT`. `PHOENIX_BASE_URL` or `PHOENIX_COLLECTOR_ENDPOINT`
 is used by OTEL export. For Phoenix Cloud, keep the host/base URL pointed at the
-same space and set the project name you expect to query.
+same space and set the project name you expect to query. Phoenix MCP launches
+use a pinned default package spec for reproducible demos and CI; set
+`TRACEPILOT_PHOENIX_MCP_PACKAGE` only for a deliberate Phoenix MCP package
+upgrade.
 
 ### Local Verification
 

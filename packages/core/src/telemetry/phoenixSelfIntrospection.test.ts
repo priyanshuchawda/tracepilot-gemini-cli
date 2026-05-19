@@ -354,7 +354,7 @@ describe('phoenix self introspection', () => {
     expect(stdioTransport).toHaveBeenCalledWith(
       expect.objectContaining({
         command: 'npx',
-        args: ['-y', '@arizeai/phoenix-mcp@latest'],
+        args: ['-y', '@arizeai/phoenix-mcp@4.0.13'],
         env: expect.objectContaining({
           PHOENIX_API_KEY: 'phx_test_key',
           PHOENIX_HOST: 'https://app.phoenix.arize.com/s/test-space',
@@ -378,6 +378,46 @@ describe('phoenix self introspection', () => {
         }),
       }),
       expect.any(Function),
+    );
+  });
+
+  it('honors an explicit Phoenix MCP package override for direct env queries', async () => {
+    vi.stubEnv('PHOENIX_API_KEY', 'phx_test_key');
+    vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');
+    vi.stubEnv('PHOENIX_BASE_URL', 'https://app.phoenix.arize.com/s/demo');
+    vi.stubEnv('TRACEPILOT_PHOENIX_MCP_PACKAGE', '@arizeai/phoenix-mcp@4.0.12');
+    mcpClient.callTool.mockResolvedValue({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            spans: [
+              {
+                name: 'gemini_cli.tool.shell',
+                attributes: {
+                  [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+                  [GEMINI_CLI_COMMAND_EXIT_CODE]: 1,
+                  [GEMINI_CLI_OUTPUT_SHA256]: 'override-hash',
+                },
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => undefined,
+    } as unknown as Config;
+
+    await queryPhoenixForFailedToolCall(config, makeFailedShellCall());
+
+    expect(stdioTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ['-y', '@arizeai/phoenix-mcp@4.0.12'],
+      }),
     );
   });
 
