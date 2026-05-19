@@ -149,11 +149,14 @@ export async function queryPhoenixForFailedToolCall(
         if (toolResult.error) {
           throw new Error(toolResult.error.message);
         }
-        const evidence = extractEvidence({
-          llmContent: toolResult.llmContent,
-          returnDisplay: toolResult.returnDisplay,
-          data: toolResult.data,
-        });
+        const evidence = extractEvidence(
+          {
+            llmContent: toolResult.llmContent,
+            returnDisplay: toolResult.returnDisplay,
+            data: toolResult.data,
+          },
+          call.request.name,
+        );
         const result: PhoenixSelfIntrospectionResult = {
           attempted: true,
           available: true,
@@ -432,9 +435,12 @@ async function withTimeout<T>(
   }
 }
 
-function extractEvidence(value: unknown): PhoenixTraceEvidence {
+function extractEvidence(
+  value: unknown,
+  failedToolName?: string,
+): PhoenixTraceEvidence {
   const raw = JSON.parse(safeJsonStringify(value)) as unknown;
-  const span = findSpanLikeObject(raw);
+  const span = findBestSpanLikeObject(raw, failedToolName);
   const attributes = getRecord(span?.['attributes']);
   const previewValue = getString(attributes, GEMINI_CLI_OUTPUT_PREVIEW);
   const redactedPreview = previewValue
@@ -450,32 +456,65 @@ function extractEvidence(value: unknown): PhoenixTraceEvidence {
   };
 }
 
-function findSpanLikeObject(
+function findBestSpanLikeObject(
   value: unknown,
+  failedToolName?: string,
 ): Record<string, unknown> | undefined {
+  const spans = collectSpanLikeObjects(value);
+  return (
+    spans.find((span) => isMatchingFailedSpan(span, failedToolName)) ??
+    spans.find((span) => isMatchingToolSpan(span, failedToolName)) ??
+    spans.find(isFailedSpan) ??
+    spans[0]
+  );
+}
+
+function collectSpanLikeObjects(
+  value: unknown,
+  found: Array<Record<string, unknown>> = [],
+): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
     for (const item of value) {
-      const found = findSpanLikeObject(item);
-      if (found) {
-        return found;
-      }
+      collectSpanLikeObjects(item, found);
     }
-    return undefined;
+    return found;
   }
   const record = getRecord(value);
   if (!record) {
-    return undefined;
+    return found;
   }
   if (getString(record, 'name') && getRecord(record['attributes'])) {
-    return record;
+    found.push(record);
+    return found;
   }
   for (const child of Object.values(record)) {
-    const found = findSpanLikeObject(child);
-    if (found) {
-      return found;
-    }
+    collectSpanLikeObjects(child, found);
   }
-  return undefined;
+  return found;
+}
+
+function isMatchingFailedSpan(
+  span: Record<string, unknown>,
+  failedToolName: string | undefined,
+): boolean {
+  return isMatchingToolSpan(span, failedToolName) && isFailedSpan(span);
+}
+
+function isMatchingToolSpan(
+  span: Record<string, unknown>,
+  failedToolName: string | undefined,
+): boolean {
+  if (!failedToolName) {
+    return false;
+  }
+  const attributes = getRecord(span['attributes']);
+  return getString(attributes, GEN_AI_TOOL_NAME) === failedToolName;
+}
+
+function isFailedSpan(span: Record<string, unknown>): boolean {
+  const attributes = getRecord(span['attributes']);
+  const exitCode = getNumber(attributes, GEMINI_CLI_COMMAND_EXIT_CODE);
+  return exitCode !== undefined && exitCode !== 0;
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {
