@@ -7,7 +7,12 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
-describe('scripts/tracepilot-secret-manager-sync.mjs', () => {
+const describeGcloud =
+  process.env.TRACEPILOT_ENABLE_GCLOUD_TESTS === 'true'
+    ? describe
+    : describe.skip;
+
+describeGcloud('scripts/tracepilot-secret-manager-sync.mjs', () => {
   it('dry-runs Secret Manager sync without printing secret values', () => {
     const output = execFileSync(
       process.execPath,

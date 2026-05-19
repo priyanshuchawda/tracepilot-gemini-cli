@@ -7,7 +7,12 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
-describe('scripts/tracepilot-cloud-run-deploy.mjs', () => {
+const describeGcloud =
+  process.env.TRACEPILOT_ENABLE_GCLOUD_TESTS === 'true'
+    ? describe
+    : describe.skip;
+
+describeGcloud('scripts/tracepilot-cloud-run-deploy.mjs', () => {
   it('dry-runs secret bindings and Phoenix env without leaking values', () => {
     const output = execFileSync(
       process.execPath,
