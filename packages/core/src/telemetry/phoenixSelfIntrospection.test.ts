@@ -258,6 +258,47 @@ describe('phoenix self introspection', () => {
     });
   });
 
+  it('does not claim trace evidence when Phoenix returns no spans', async () => {
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: { spans: [] },
+      returnDisplay: '',
+    });
+
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => ({
+        getMcpServers: () => ({ phoenix: {} }),
+        getClient: () => ({
+          getStatus: () => 'connected',
+        }),
+      }),
+      getToolRegistry: () => ({
+        getToolsByServer: () => [
+          {
+            name: 'mcp_phoenix_get_spans',
+            serverToolName: 'get-spans',
+            buildAndExecute,
+          },
+        ],
+      }),
+    } as unknown as Config;
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: false,
+      reason: expect.stringContaining(
+        'Phoenix MCP did not return matching failed span evidence',
+      ),
+    });
+  });
+
   it('queries Phoenix MCP directly from env when no configured MCP client exists', async () => {
     vi.stubEnv('PHOENIX_API_KEY', 'phx_test_key');
     vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');

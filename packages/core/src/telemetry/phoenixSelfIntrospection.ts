@@ -157,6 +157,15 @@ export async function queryPhoenixForFailedToolCall(
           },
           call.request.name,
         );
+        if (!evidence) {
+          const result: PhoenixSelfIntrospectionResult = {
+            attempted: true,
+            available: false,
+            reason: `Phoenix MCP did not return matching failed span evidence for ${call.request.name}.`,
+          };
+          metadata.output = result;
+          return result;
+        }
         const result: PhoenixSelfIntrospectionResult = {
           attempted: true,
           available: true,
@@ -438,9 +447,12 @@ async function withTimeout<T>(
 function extractEvidence(
   value: unknown,
   failedToolName?: string,
-): PhoenixTraceEvidence {
+): PhoenixTraceEvidence | undefined {
   const raw = JSON.parse(safeJsonStringify(value)) as unknown;
   const span = findBestSpanLikeObject(raw, failedToolName);
+  if (!span) {
+    return undefined;
+  }
   const attributes = getRecord(span?.['attributes']);
   const previewValue = getString(attributes, GEMINI_CLI_OUTPUT_PREVIEW);
   const redactedPreview = previewValue
