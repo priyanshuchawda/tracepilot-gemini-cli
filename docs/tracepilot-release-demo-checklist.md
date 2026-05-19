@@ -86,6 +86,8 @@ Latest strict evidence:
 - Strict broken-node demo: passed for session
   `tracepilot-broken-node-app-1778699160588`.
 - Strict demo trace evidence: `de13112b1dadd28dda63a83365d92344`.
+- Self-introspection regression coverage: matching failed spans are preferred,
+  and empty Phoenix span responses degrade without claiming trace evidence.
 
 For cheap default operation, the deploy helper configures min instances as zero
 and max instances as one. The hosted service exposes only fixed demo/status

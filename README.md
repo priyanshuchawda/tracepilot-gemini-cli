@@ -113,14 +113,15 @@ transcripts should be rotated before public submission.
 
 ## Current Status
 
-| Area                    | Status                           | Evidence                                                                            |
-| ----------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
-| Gemini CLI baseline     | Working                          | Build, lint, typecheck slices passed during P0 work.                                |
-| Phoenix OTEL export     | Working                          | `npm run smoke:phoenix` passed with real Phoenix config.                            |
-| Phoenix MCP visibility  | Working                          | `npm run smoke:phoenix:mcp` returned the smoke trace.                               |
-| Broken repo repair demo | Working                          | Strict demo exported/queryed trace evidence and passed retry tests.                 |
-| Redaction               | Working for implemented patterns | Sanitizer, eval, and demo paths redact secrets before traces/reports.               |
-| Command safety gate     | Working                          | Blocks destructive and credential-dumping commands in policy tests.                 |
-| Cloud Run hosted URL    | Not currently deployed           | Redeploy later and run `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`. |
+| Area                       | Status                           | Evidence                                                                            |
+| -------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
+| Gemini CLI baseline        | Working                          | Build, lint, typecheck slices passed during P0 work.                                |
+| Phoenix OTEL export        | Working                          | `npm run smoke:phoenix` passed with real Phoenix config.                            |
+| Phoenix MCP visibility     | Working                          | `npm run smoke:phoenix:mcp` returned the smoke trace.                               |
+| Phoenix self-introspection | Working                          | Queries Phoenix MCP for matching failed span evidence and degrades when absent.     |
+| Broken repo repair demo    | Working                          | Strict demo exported/queryed trace evidence and passed retry tests.                 |
+| Redaction                  | Working for implemented patterns | Sanitizer, eval, and demo paths redact secrets before traces/reports.               |
+| Command safety gate        | Working                          | Blocks destructive and credential-dumping commands in policy tests.                 |
+| Cloud Run hosted URL       | Not currently deployed           | Redeploy later and run `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`. |
 
 The repository is private while it is being prepared for final submission.
