@@ -192,6 +192,72 @@ describe('phoenix self introspection', () => {
     );
   });
 
+  it('selects the matching failed tool span when Phoenix returns multiple spans', async () => {
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: 'gemini_cli.tool.file',
+            attributes: {
+              [GEN_AI_TOOL_NAME]: 'read_file',
+              [GEMINI_CLI_COMMAND_EXIT_CODE]: 0,
+              [GEMINI_CLI_OUTPUT_PREVIEW]: 'Unrelated successful file read',
+              [GEMINI_CLI_OUTPUT_SHA256]: 'unrelated-hash',
+            },
+          },
+          {
+            name: 'gemini_cli.tool.shell',
+            attributes: {
+              [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+              [GEMINI_CLI_COMMAND_EXIT_CODE]: 7,
+              [GEMINI_CLI_OUTPUT_PREVIEW]: 'AssertionError: matching failure',
+              [GEMINI_CLI_OUTPUT_SHA256]: 'matching-hash',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+
+    const config = {
+      getSessionId: () => 'session-1',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => ({
+        getMcpServers: () => ({ phoenix: {} }),
+        getClient: () => ({
+          getStatus: () => 'connected',
+        }),
+      }),
+      getToolRegistry: () => ({
+        getToolsByServer: () => [
+          {
+            name: 'mcp_phoenix_get_spans',
+            serverToolName: 'get-spans',
+            buildAndExecute,
+          },
+        ],
+      }),
+    } as unknown as Config;
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: {
+        spanName: 'gemini_cli.tool.shell',
+        toolName: SHELL_TOOL_NAME,
+        exitCode: 7,
+        outputPreview: 'AssertionError: matching failure',
+        outputSha256: 'matching-hash',
+      },
+    });
+  });
+
   it('queries Phoenix MCP directly from env when no configured MCP client exists', async () => {
     vi.stubEnv('PHOENIX_API_KEY', 'phx_test_key');
     vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');
