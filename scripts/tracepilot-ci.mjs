@@ -11,6 +11,7 @@ import path from 'node:path';
 
 const logDir = path.resolve('.ai-logs', 'tracepilot-ci');
 const summaryPath = path.join(logDir, 'summary.json');
+const verbose = process.env.TRACEPILOT_CI_VERBOSE === 'true';
 const secretValues = [
   process.env.GEMINI_API_KEY,
   process.env.PHOENIX_API_KEY,
@@ -124,12 +125,20 @@ function spawnAndCapture(executable, args) {
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       output += text;
-      process.stdout.write(redact(text));
+      if (verbose) {
+        process.stdout.write(redact(text));
+      }
     });
     child.stderr.on('data', (chunk) => {
       const text = chunk.toString();
       output += text;
-      process.stderr.write(redact(text));
+      if (verbose) {
+        process.stderr.write(redact(text));
+      }
+    });
+    child.on('error', (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      resolve({ exitCode: 1, output: `${output}${message}\n` });
     });
     child.on('close', (exitCode) => {
       resolve({ exitCode: exitCode ?? 1, output });
@@ -138,10 +147,12 @@ function spawnAndCapture(executable, args) {
 }
 
 function resolveCommand(executable, args) {
-  if (executable === 'npm' && process.env.npm_execpath) {
+  const npmExecPath =
+    process.env.TRACEPILOT_CI_NPM_EXEC_PATH || process.env.npm_execpath;
+  if (executable === 'npm' && npmExecPath) {
     return {
       executable: process.execPath,
-      args: [process.env.npm_execpath, ...args],
+      args: [npmExecPath, ...args],
     };
   }
   return { executable, args };
