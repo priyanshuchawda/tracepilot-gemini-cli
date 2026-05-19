@@ -29,6 +29,8 @@ import { runInDevTraceSpan } from './trace.js';
 const PHOENIX_MCP_TOOL_NAME = 'get-spans';
 const DEFAULT_TIMEOUT_MS = 20000;
 const DIRECT_PHOENIX_MCP_SERVER_NAME = 'tracepilot-phoenix-env';
+const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
+const PHOENIX_MCP_PACKAGE_ENV = 'TRACEPILOT_PHOENIX_MCP_PACKAGE';
 
 interface PhoenixMcpToolResult {
   llmContent?: unknown;
@@ -243,7 +245,7 @@ async function callDirectPhoenixMcpGetSpans(
 ): Promise<PhoenixMcpToolResult> {
   const transport = new StdioClientTransport({
     command: 'npx',
-    args: ['-y', '@arizeai/phoenix-mcp@latest'],
+    args: ['-y', resolvePhoenixMcpPackage(process.env)],
     env: {
       ...process.env,
       PHOENIX_API_KEY: directConfig.apiKey,
@@ -390,6 +392,10 @@ function normalizePhoenixUrl(value: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function resolvePhoenixMcpPackage(env: NodeJS.ProcessEnv): string {
+  return env[PHOENIX_MCP_PACKAGE_ENV]?.trim() || DEFAULT_PHOENIX_MCP_PACKAGE;
 }
 
 function getTextContent(result: unknown): string {

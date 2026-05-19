@@ -5,6 +5,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 dotenv.config({ quiet: true });
 
+const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const secretValues = [
@@ -90,6 +91,12 @@ function assertPhoenixEnv() {
       2,
     );
   }
+}
+
+function resolvePhoenixMcpPackage(env = process.env) {
+  return (
+    env.TRACEPILOT_PHOENIX_MCP_PACKAGE?.trim() || DEFAULT_PHOENIX_MCP_PACKAGE
+  );
 }
 
 function getTextContent(result) {
@@ -189,7 +196,7 @@ async function createSmokeSpan(sessionId) {
 async function querySmokeSpan(sessionId, host) {
   const transport = new StdioClientTransport({
     command: 'npx',
-    args: ['-y', '@arizeai/phoenix-mcp@latest'],
+    args: ['-y', resolvePhoenixMcpPackage()],
     env: {
       ...process.env,
       PHOENIX_HOST: host,
