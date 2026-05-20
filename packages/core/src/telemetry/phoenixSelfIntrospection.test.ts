@@ -57,6 +57,11 @@ describe('phoenix self introspection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    vi.stubEnv('PHOENIX_API_KEY', '');
+    vi.stubEnv('PHOENIX_PROJECT', '');
+    vi.stubEnv('PHOENIX_HOST', '');
+    vi.stubEnv('PHOENIX_BASE_URL', '');
+    vi.stubEnv('PHOENIX_COLLECTOR_ENDPOINT', '');
     mcpClient.close.mockResolvedValue(undefined);
     mcpClient.connect.mockResolvedValue(undefined);
     mcpClient.callTool.mockReset();
@@ -302,9 +307,10 @@ describe('phoenix self introspection', () => {
   it('queries Phoenix MCP directly from env when no configured MCP client exists', async () => {
     vi.stubEnv('PHOENIX_API_KEY', 'phx_test_key');
     vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');
+    vi.stubEnv('PHOENIX_HOST', 'https://app.phoenix.arize.com/s/test-space');
     vi.stubEnv(
       'PHOENIX_BASE_URL',
-      'https://app.phoenix.arize.com/s/YOUR_SPACE',
+      'https://app.phoenix.arize.com/s/test-space',
     );
     vi.stubEnv(
       'PHOENIX_COLLECTOR_ENDPOINT',
@@ -384,6 +390,7 @@ describe('phoenix self introspection', () => {
   it('honors an explicit Phoenix MCP package override for direct env queries', async () => {
     vi.stubEnv('PHOENIX_API_KEY', 'phx_test_key');
     vi.stubEnv('PHOENIX_PROJECT', 'tracepilot-test');
+    vi.stubEnv('PHOENIX_HOST', 'https://app.phoenix.arize.com/s/demo');
     vi.stubEnv('PHOENIX_BASE_URL', 'https://app.phoenix.arize.com/s/demo');
     vi.stubEnv('TRACEPILOT_PHOENIX_MCP_PACKAGE', '@arizeai/phoenix-mcp@4.0.12');
     mcpClient.callTool.mockResolvedValue({
