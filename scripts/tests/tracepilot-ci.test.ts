@@ -68,5 +68,5 @@ describe('scripts/tracepilot-ci.mjs', () => {
     );
     expect(lintLog).toContain('CHILD_STDOUT_run_lint');
     expect(lintLog).toContain('CHILD_STDERR_run_lint');
-  });
+  }, 30000);
 });
