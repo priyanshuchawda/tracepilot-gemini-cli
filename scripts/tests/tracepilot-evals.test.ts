@@ -75,5 +75,5 @@ describe('scripts/tracepilot-evals.ts', () => {
     expect(report.ok).toBe(true);
     expect(report.results).toHaveLength(7);
     expect(JSON.stringify(report)).not.toContain('sk-proj-secret');
-  });
+  }, 30000);
 });

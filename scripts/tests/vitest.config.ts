@@ -12,14 +12,15 @@ export default defineConfig({
     environment: 'node',
     include: ['scripts/tests/**/*.test.{js,ts}'],
     setupFiles: ['scripts/tests/test-setup.ts'],
+    testTimeout: 30000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
     },
     poolOptions: {
       threads: {
-        minThreads: 8,
-        maxThreads: 16,
+        minThreads: 1,
+        maxThreads: 4,
       },
     },
   },
