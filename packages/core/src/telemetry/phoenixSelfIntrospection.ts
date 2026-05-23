@@ -15,13 +15,22 @@ import { getErrorMessage } from '../utils/errors.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
 import {
   GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_MCP_QUERY_COUNT,
   GEMINI_CLI_MCP_SERVER,
   GEMINI_CLI_MCP_TOOL,
   GEMINI_CLI_OUTPUT_PREVIEW,
   GEMINI_CLI_OUTPUT_SHA256,
+  GEMINI_CLI_PHOENIX_TRACE_IDS_CONSULTED,
+  GEMINI_CLI_REPAIR_CONFIDENCE_SCORE,
+  GEMINI_CLI_REPAIR_FINGERPRINT,
+  GEMINI_CLI_REPAIR_ROOT_CAUSE,
+  GEMINI_CLI_REPAIR_SIGNATURE_ID,
+  GEMINI_CLI_REPAIR_STRATEGY,
+  GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
   GeminiCliOperation,
   GEN_AI_TOOL_NAME,
 } from './constants.js';
+import type { TracePilotFailureSignature } from '../tracepilot/failureSignature.js';
 import { redactSensitiveText } from './sanitize.js';
 import { flushTelemetry } from './sdk.js';
 import { runInDevTraceSpan } from './trace.js';
@@ -62,6 +71,39 @@ export type PhoenixSelfIntrospectionResult =
       attempted: true;
       available: true;
       evidence: PhoenixTraceEvidence;
+    };
+
+export interface PhoenixHistoricalRepairEvidence {
+  sessionId?: string;
+  traceId?: string;
+  spanId?: string;
+  signatureId?: string;
+  repairFingerprint?: string;
+  rootCause?: string;
+  strategy?: string[];
+  confidenceScore?: number;
+  verificationPassed?: boolean;
+  outputSha256?: string;
+  outputPreview?: string;
+}
+
+export type PhoenixHistoricalRepairQueryResult =
+  | {
+      attempted: false;
+      available: false;
+      reason: string;
+      evidence: [];
+    }
+  | {
+      attempted: true;
+      available: false;
+      reason: string;
+      evidence: [];
+    }
+  | {
+      attempted: true;
+      available: true;
+      evidence: PhoenixHistoricalRepairEvidence[];
     };
 
 export async function queryPhoenixForFailedToolCall(
@@ -180,6 +222,145 @@ export async function queryPhoenixForFailedToolCall(
           attempted: true,
           available: false,
           reason: `Phoenix MCP query failed: ${getErrorMessage(error)}`,
+        };
+        metadata.error = error;
+        metadata.output = result;
+        return result;
+      }
+    },
+  );
+}
+
+export async function queryPhoenixForHistoricalRepairs(
+  config: Config,
+  signature: TracePilotFailureSignature,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<PhoenixHistoricalRepairQueryResult> {
+  try {
+    await flushTelemetry(config);
+  } catch (error) {
+    return {
+      attempted: true,
+      available: false,
+      reason: `Phoenix telemetry flush failed before historical repair query: ${getErrorMessage(
+        error,
+      )}`,
+      evidence: [],
+    };
+  }
+
+  return runInDevTraceSpan(
+    {
+      operation: GeminiCliOperation.RepairMemoryRetrieve,
+      logPrompts: config.getTelemetryLogPromptsEnabled(),
+      tracesEnabled: config.getTelemetryTracesEnabled(),
+      sessionId: config.getSessionId(),
+      attributes: {
+        [GEMINI_CLI_REPAIR_SIGNATURE_ID]: signature.id,
+        [GEMINI_CLI_REPAIR_ROOT_CAUSE]: signature.taxonomy,
+      },
+    },
+    async ({ metadata }) => {
+      metadata.input = {
+        signatureId: signature.id,
+        taxonomy: signature.taxonomy,
+        commandFamily: signature.commandFamily,
+        outputSha256: signature.outputSha256,
+      };
+
+      const args = buildPhoenixHistoricalRepairArgs(signature);
+      const phoenixQuery = getPhoenixMcpQuery(config, args);
+      if (!phoenixQuery) {
+        const result: PhoenixHistoricalRepairQueryResult = {
+          attempted: false,
+          available: false,
+          reason:
+            'Phoenix MCP client unavailable or PHOENIX_API_KEY/PHOENIX_PROJECT/Phoenix host env is missing.',
+          evidence: [],
+        };
+        metadata.output = result;
+        return result;
+      }
+
+      try {
+        const controller = new AbortController();
+        const toolResult = await runInDevTraceSpan(
+          {
+            operation: GeminiCliOperation.ToolPhoenixMcp,
+            logPrompts: config.getTelemetryLogPromptsEnabled(),
+            tracesEnabled: config.getTelemetryTracesEnabled(),
+            sessionId: config.getSessionId(),
+            attributes: {
+              [GEN_AI_TOOL_NAME]: PHOENIX_MCP_TOOL_NAME,
+              [GEMINI_CLI_MCP_SERVER]: phoenixQuery.serverName,
+              [GEMINI_CLI_MCP_TOOL]: PHOENIX_MCP_TOOL_NAME,
+            },
+          },
+          async ({ metadata }) => {
+            metadata.input = {
+              serverName: phoenixQuery.serverName,
+              toolName: PHOENIX_MCP_TOOL_NAME,
+              args,
+            };
+
+            const result = await withTimeout(
+              phoenixQuery.execute(controller.signal),
+              timeoutMs,
+              () => controller.abort(),
+            );
+
+            if (result.error) {
+              metadata.error = result.error;
+              metadata.output = {
+                status: 'error',
+                message: result.error.message,
+              };
+            } else {
+              metadata.output = { status: 'ok' };
+            }
+            return result;
+          },
+        );
+        if (toolResult.error) {
+          throw new Error(toolResult.error.message);
+        }
+        const evidence = extractHistoricalRepairEvidence(
+          {
+            llmContent: toolResult.llmContent,
+            returnDisplay: toolResult.returnDisplay,
+            data: toolResult.data,
+          },
+          signature,
+        );
+        const result: PhoenixHistoricalRepairQueryResult =
+          evidence.length > 0
+            ? {
+                attempted: true,
+                available: true,
+                evidence,
+              }
+            : {
+                attempted: true,
+                available: false,
+                reason: `Phoenix MCP returned no historical repair spans matching ${signature.id}.`,
+                evidence: [],
+              };
+
+        metadata.attributes[GEMINI_CLI_MCP_QUERY_COUNT] = 1;
+        metadata.attributes[GEMINI_CLI_PHOENIX_TRACE_IDS_CONSULTED] = evidence
+          .map((item) => item.traceId)
+          .filter((value): value is string => value !== undefined)
+          .join(',');
+        metadata.output = result;
+        return result;
+      } catch (error) {
+        const result: PhoenixHistoricalRepairQueryResult = {
+          attempted: true,
+          available: false,
+          reason: `Phoenix historical repair query failed: ${getErrorMessage(
+            error,
+          )}`,
+          evidence: [],
         };
         metadata.error = error;
         metadata.output = result;
@@ -362,6 +543,33 @@ function buildPhoenixGetSpansArgs(sessionId: string): Record<string, unknown> {
   return args;
 }
 
+function buildPhoenixHistoricalRepairArgs(
+  signature: TracePilotFailureSignature,
+): Record<string, unknown> {
+  const startTime = new Date(
+    Date.now() - 30 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const args: Record<string, unknown> = {
+    start_time: startTime,
+    names: [
+      GeminiCliOperation.RepairPlan,
+      GeminiCliOperation.RepairReport,
+      GeminiCliOperation.RepairEval,
+      GeminiCliOperation.RepairVerify,
+      GeminiCliOperation.ToolShell,
+    ],
+    limit: 100,
+  };
+  if (process.env['PHOENIX_PROJECT']) {
+    args['project_identifier'] = process.env['PHOENIX_PROJECT'];
+  }
+  // Phoenix MCP versions vary in filter support; this query remains broad and
+  // filtering is deterministic client-side.
+  args['query'] =
+    `${signature.id} ${signature.taxonomy} ${signature.outputSha256 ?? ''}`.trim();
+  return args;
+}
+
 function resolvePhoenixMcpHost(env: NodeJS.ProcessEnv): string | undefined {
   return [
     env['PHOENIX_HOST'],
@@ -474,6 +682,96 @@ function extractEvidence(
   };
 }
 
+function extractHistoricalRepairEvidence(
+  value: unknown,
+  signature: TracePilotFailureSignature,
+): PhoenixHistoricalRepairEvidence[] {
+  const raw = JSON.parse(safeJsonStringify(value)) as unknown;
+  const spans = collectSpanLikeObjects(raw);
+  const evidence = spans
+    .map((span) => toHistoricalRepairEvidence(span))
+    .filter(
+      (item): item is PhoenixHistoricalRepairEvidence =>
+        item !== undefined &&
+        isRelevantHistoricalRepairEvidence(item, signature),
+    );
+
+  const byStableKey = new Map<string, PhoenixHistoricalRepairEvidence>();
+  for (const item of evidence) {
+    const key =
+      item.traceId ??
+      item.spanId ??
+      item.repairFingerprint ??
+      item.signatureId ??
+      safeJsonStringify(item);
+    byStableKey.set(key, item);
+  }
+  return [...byStableKey.values()].slice(0, 10);
+}
+
+function toHistoricalRepairEvidence(
+  span: Record<string, unknown>,
+): PhoenixHistoricalRepairEvidence | undefined {
+  const attributes = getRecord(span['attributes']);
+  if (!attributes) {
+    return undefined;
+  }
+  const context = getRecord(span['context']);
+  const outputPreview = getString(attributes, GEMINI_CLI_OUTPUT_PREVIEW);
+  return {
+    sessionId:
+      getString(attributes, 'session.id') ??
+      getString(attributes, 'gemini_cli.session.id') ??
+      getString(attributes, 'gen_ai.conversation.id'),
+    traceId: getString(context, 'trace_id') ?? getString(span, 'trace_id'),
+    spanId: getString(context, 'span_id') ?? getString(span, 'span_id'),
+    signatureId: getString(attributes, GEMINI_CLI_REPAIR_SIGNATURE_ID),
+    repairFingerprint: getString(attributes, GEMINI_CLI_REPAIR_FINGERPRINT),
+    rootCause: getString(attributes, GEMINI_CLI_REPAIR_ROOT_CAUSE),
+    strategy: parseStrategy(getString(attributes, GEMINI_CLI_REPAIR_STRATEGY)),
+    confidenceScore: getNumber(attributes, GEMINI_CLI_REPAIR_CONFIDENCE_SCORE),
+    verificationPassed: getBoolean(
+      attributes,
+      GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
+    ),
+    outputSha256: getString(attributes, GEMINI_CLI_OUTPUT_SHA256),
+    outputPreview: outputPreview
+      ? redactSensitiveText(outputPreview).value
+      : undefined,
+  };
+}
+
+function isRelevantHistoricalRepairEvidence(
+  evidence: PhoenixHistoricalRepairEvidence,
+  signature: TracePilotFailureSignature,
+): boolean {
+  return (
+    evidence.signatureId === signature.id ||
+    evidence.rootCause === signature.taxonomy ||
+    (signature.outputSha256 !== undefined &&
+      evidence.outputSha256 === signature.outputSha256) ||
+    evidence.verificationPassed === true
+  );
+}
+
+function parseStrategy(value: string | undefined): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === 'string');
+    }
+  } catch {
+    // Fall through to delimiter parsing for older spans.
+  }
+  return value
+    .split(/\s*(?:\||,|\n)\s*/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function findBestSpanLikeObject(
   value: unknown,
   failedToolName?: string,
@@ -557,4 +855,12 @@ function getNumber(
 ): number | undefined {
   const value = record?.[key];
   return typeof value === 'number' ? value : undefined;
+}
+
+function getBoolean(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): boolean | undefined {
+  const value = record?.[key];
+  return typeof value === 'boolean' ? value : undefined;
 }

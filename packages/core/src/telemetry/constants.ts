@@ -45,6 +45,22 @@ export const GEMINI_CLI_OUTPUT_REDACTED = 'gemini_cli.output.redacted';
 export const GEMINI_CLI_FILE_PATH = 'gemini_cli.file.path';
 export const GEMINI_CLI_MCP_SERVER = 'gemini_cli.mcp.server';
 export const GEMINI_CLI_MCP_TOOL = 'gemini_cli.mcp.tool';
+export const GEMINI_CLI_REPAIR_SIGNATURE_ID = 'gemini_cli.repair.signature_id';
+export const GEMINI_CLI_REPAIR_FINGERPRINT = 'gemini_cli.repair.fingerprint';
+export const GEMINI_CLI_REPAIR_ROOT_CAUSE = 'gemini_cli.repair.root_cause';
+export const GEMINI_CLI_REPAIR_STRATEGY = 'gemini_cli.repair.strategy';
+export const GEMINI_CLI_REPAIR_SIMILARITY_SCORE =
+  'gemini_cli.repair.similarity_score';
+export const GEMINI_CLI_REPAIR_CONFIDENCE_SCORE =
+  'gemini_cli.repair.confidence_score';
+export const GEMINI_CLI_REPAIR_RISK_LEVEL = 'gemini_cli.repair.risk_level';
+export const GEMINI_CLI_REPAIR_REGRESSION_CONFIDENCE =
+  'gemini_cli.repair.regression_confidence';
+export const GEMINI_CLI_REPAIR_VERIFICATION_PASSED =
+  'gemini_cli.repair.verification_passed';
+export const GEMINI_CLI_PHOENIX_TRACE_IDS_CONSULTED =
+  'gemini_cli.phoenix.trace_ids_consulted';
+export const GEMINI_CLI_MCP_QUERY_COUNT = 'gemini_cli.mcp.query_count';
 
 export enum OpenInferenceSpanKind {
   Agent = 'AGENT',
@@ -69,4 +85,9 @@ export enum GeminiCliOperation {
   ScheduleToolCalls = 'schedule_tool_calls',
   SelfIntrospection = 'gemini_cli.chain.self_introspection',
   RepairPlan = 'gemini_cli.chain.repair_plan',
+  RepairMemoryRetrieve = 'gemini_cli.chain.repair_memory_retrieve',
+  RepairRiskGate = 'gemini_cli.chain.repair_risk_gate',
+  RepairVerify = 'gemini_cli.chain.repair_verify',
+  RepairReport = 'gemini_cli.chain.repair_report',
+  RepairEval = 'gemini_cli.chain.repair_eval',
 }
