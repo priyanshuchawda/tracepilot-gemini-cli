@@ -979,6 +979,19 @@ export class Scheduler {
                   ...part.functionResponse.response,
                   tracepilot_self_introspection: evidenceText,
                   tracepilot_repair_plan: repairPlan.text,
+                  tracepilot_failure_signature: repairPlan.failureSignature?.id,
+                  tracepilot_historical_repairs_found:
+                    repairPlan.historicalRepairCandidates?.length ?? 0,
+                  tracepilot_confidence_score: repairPlan.confidence?.score,
+                  tracepilot_risk_level: repairPlan.patchRisk?.level,
+                  tracepilot_verification_matrix:
+                    repairPlan.verificationMatrix?.map((check) => ({
+                      id: check.id,
+                      command: check.command,
+                      required: check.required,
+                      status: check.status,
+                    })),
+                  tracepilot_repair_artifact: repairPlan.repairArtifact,
                 },
               },
             };
@@ -992,6 +1005,19 @@ export class Scheduler {
                   error: result.response.error?.message,
                   tracepilot_self_introspection: evidenceText,
                   tracepilot_repair_plan: repairPlan.text,
+                  tracepilot_failure_signature: repairPlan.failureSignature?.id,
+                  tracepilot_historical_repairs_found:
+                    repairPlan.historicalRepairCandidates?.length ?? 0,
+                  tracepilot_confidence_score: repairPlan.confidence?.score,
+                  tracepilot_risk_level: repairPlan.patchRisk?.level,
+                  tracepilot_verification_matrix:
+                    repairPlan.verificationMatrix?.map((check) => ({
+                      id: check.id,
+                      command: check.command,
+                      required: check.required,
+                      status: check.status,
+                    })),
+                  tracepilot_repair_artifact: repairPlan.repairArtifact,
                 },
               },
             },

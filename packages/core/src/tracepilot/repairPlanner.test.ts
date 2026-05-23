@@ -22,14 +22,32 @@ const runInDevTraceSpan = vi.hoisted(() =>
     return fn({ metadata });
   }),
 );
+const queryPhoenixForHistoricalRepairs = vi.hoisted(() => vi.fn());
 
 vi.mock('../telemetry/trace.js', () => ({
   runInDevTraceSpan,
 }));
 
+vi.mock('../telemetry/phoenixSelfIntrospection.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../telemetry/phoenixSelfIntrospection.js')
+    >();
+  return {
+    ...actual,
+    queryPhoenixForHistoricalRepairs,
+  };
+});
+
 describe('TracePilot repair planner', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    queryPhoenixForHistoricalRepairs.mockResolvedValue({
+      attempted: false,
+      available: false,
+      reason: 'Phoenix MCP historical query unavailable.',
+      evidence: [],
+    });
   });
 
   it('creates a repair plan from Phoenix trace evidence and emits a repair-plan span', async () => {
@@ -77,8 +95,57 @@ describe('TracePilot repair planner', () => {
     });
     expect(plan.proposedFix).toContain('trace evidence');
     expect(plan.text).toContain('TracePilot repair plan');
+    expect(plan.failureSignature?.id).toMatch(/^tracepilot-failure-/);
+    expect(plan.confidence?.score).toBeGreaterThan(0);
+    expect(plan.patchRisk?.level).toBe('LOW');
+    expect(plan.verificationMatrix?.map((check) => check.id)).toContain(
+      'typecheck',
+    );
     expect(plan.text).toContain('output_sha256=abc123');
     expect(plan.text).toContain('failure_evidence=AssertionError');
+  });
+
+  it('uses Phoenix historical repair evidence when available', async () => {
+    queryPhoenixForHistoricalRepairs.mockResolvedValue({
+      attempted: true,
+      available: true,
+      evidence: [
+        {
+          sessionId: 'historical-session',
+          traceId: 'trace-1',
+          rootCause: 'test_assertion_failure',
+          strategy: ['reuse verified API base URL repair'],
+          verificationPassed: true,
+        },
+      ],
+    });
+
+    const plan = await buildTraceEvidenceRepairPlan(
+      makeConfig(),
+      makeFailedShellCall('npm test'),
+      {
+        attempted: true,
+        available: true,
+        evidence: {
+          spanName: 'gemini_cli.tool.shell',
+          toolName: SHELL_TOOL_NAME,
+          exitCode: 1,
+          outputPreview: 'AssertionError: expected API_BASE_URL to be set',
+          outputSha256: 'abc123',
+        },
+      },
+    );
+
+    expect(queryPhoenixForHistoricalRepairs).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        id: expect.stringMatching(/^tracepilot-failure-/),
+      }),
+    );
+    expect(plan.source).toBe('phoenix_memory');
+    expect(plan.historicalRepairCandidates).toHaveLength(1);
+    expect(plan.proposedFix).toBe('reuse verified API base URL repair');
+    expect(plan.repairArtifact?.phoenix.tracesConsulted).toEqual(['trace-1']);
   });
 
   it('degrades clearly when Phoenix trace evidence is unavailable', async () => {
