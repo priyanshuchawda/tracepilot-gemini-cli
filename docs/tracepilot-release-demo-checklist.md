@@ -58,6 +58,8 @@ npm run demo:gemini-repair-agent -- --env-file C:\path\to\tracepilot-gemini-cli\
 Required proof lines:
 
 - `AGENT_REPAIR: PASS mode=gemini`
+- `MODEL_USED: <model> attempts=1`
+- `MODEL_FALLBACK: SKIPPED`
 - `FAILED_TOOL_SPAN: PASS`
 - `PHOENIX_MCP_INTROSPECTION: PASS`
 - `CAUSAL_TRACE: PASS`

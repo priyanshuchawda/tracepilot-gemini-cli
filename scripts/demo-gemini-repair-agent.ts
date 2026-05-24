@@ -62,6 +62,7 @@ interface Options {
   envFile: string;
   cliPath: string;
   model: string;
+  modelFallbacks: string[];
 }
 
 interface CommandResult {
@@ -87,6 +88,15 @@ interface PhoenixSessionEvidence {
 
 interface AgentResult extends CommandResult {
   mode: 'gemini' | 'substitute';
+  model?: string;
+  quotaFallbackUsed: boolean;
+  attempts: AgentAttempt[];
+}
+
+interface AgentAttempt {
+  model: string;
+  exitCode: number;
+  quotaLimited: boolean;
 }
 
 interface VerifiedRepairOutcome {
@@ -122,7 +132,7 @@ async function main(argv: string[]): Promise<number> {
   const sessionId = `tracepilot-gemini-repair-${Date.now()}`;
   const before = await captureFiles(demoDir);
   const initial = await runNodeTests(demoDir);
-  const agent = await runAgent(options, demoDir, sessionId);
+  const agent = await runAgent(options, demoDir, sessionId, fixtureDir);
   const retry = await runNodeTests(demoDir);
   const changedFiles = findChangedFiles(before, await captureFiles(demoDir));
   const phoenix =
@@ -178,6 +188,9 @@ async function main(argv: string[]): Promise<number> {
     agent: {
       mode: agent.mode,
       exitCode: agent.exitCode,
+      model: agent.model,
+      quotaFallbackUsed: agent.quotaFallbackUsed,
+      attempts: agent.attempts,
       output: summarizeCommand(agent),
     },
     phoenix,
@@ -335,6 +348,7 @@ function parseArgs(argv: string[]): Options {
     envFile: path.resolve('.env'),
     cliPath: path.resolve('packages/cli/dist/index.js'),
     model: 'gemini-3.1-flash-lite-preview',
+    modelFallbacks: ['gemini-2.5-flash'],
   };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
@@ -352,6 +366,8 @@ function parseArgs(argv: string[]): Options {
       options.cliPath = path.resolve(argv[++index] ?? options.cliPath);
     } else if (arg === '--model') {
       options.model = argv[++index] ?? options.model;
+    } else if (arg === '--model-fallbacks') {
+      options.modelFallbacks = parseModelList(argv[++index]);
     }
   }
   return options;
@@ -361,16 +377,52 @@ async function runAgent(
   options: Options,
   demoDir: string,
   sessionId: string,
+  fixtureDir: string,
 ): Promise<AgentResult> {
-  if (options.agentScript) {
-    const result = await runCommand(
-      process.execPath,
-      [path.resolve(options.agentScript), demoDir],
-      demoDir,
-    );
-    return { ...result, mode: 'substitute' };
+  const modelCandidates = uniqueModels([
+    options.model,
+    ...options.modelFallbacks,
+  ]);
+  const attempts: AgentAttempt[] = [];
+  for (const [index, model] of modelCandidates.entries()) {
+    if (index > 0) {
+      await resetDemoWorkspace(fixtureDir, demoDir);
+    }
+    const result = options.agentScript
+      ? await runCommand(
+          process.execPath,
+          [path.resolve(options.agentScript), demoDir],
+          demoDir,
+        )
+      : await runGeminiAgent(options, demoDir, sessionId, model);
+    const quotaLimited = isQuotaLimited(result);
+    attempts.push({ model, exitCode: result.exitCode, quotaLimited });
+    if (
+      result.exitCode === 0 ||
+      !quotaLimited ||
+      index === modelCandidates.length - 1
+    ) {
+      return {
+        ...result,
+        mode: options.agentScript ? 'substitute' : 'gemini',
+        model,
+        quotaFallbackUsed:
+          index > 0 &&
+          result.exitCode === 0 &&
+          attempts.some((attempt) => attempt.quotaLimited),
+        attempts,
+      };
+    }
   }
+  throw new Error('Agent did not produce a result.');
+}
 
+async function runGeminiAgent(
+  options: Options,
+  demoDir: string,
+  sessionId: string,
+  model: string,
+): Promise<CommandResult> {
   const prompt = [
     'Repair this broken checkout webhook service.',
     'Run npm test first to observe the failure evidence.',
@@ -401,7 +453,7 @@ async function runAgent(
       '--sandbox=false',
       '--skip-trust',
       '--model',
-      options.model,
+      model,
       '--output-format',
       'stream-json',
     ],
@@ -414,7 +466,32 @@ async function runAgent(
     },
     15 * 60 * 1000,
   );
-  return { ...result, mode: 'gemini' };
+  return result;
+}
+
+async function resetDemoWorkspace(
+  fixtureDir: string,
+  demoDir: string,
+): Promise<void> {
+  await rm(demoDir, { recursive: true, force: true });
+  await cp(fixtureDir, demoDir, { recursive: true });
+}
+
+function parseModelList(value: string | undefined): string[] {
+  return String(value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueModels(models: string[]): string[] {
+  return [...new Set(models.filter(Boolean))];
+}
+
+function isQuotaLimited(result: CommandResult): boolean {
+  return /(?:quota|rate[- ]?limit|resource_exhausted|429|TerminalQuotaError)/i.test(
+    `${result.stdout}\n${result.stderr}`,
+  );
 }
 
 async function runNodeTests(cwd: string): Promise<CommandResult> {
@@ -728,7 +805,13 @@ function printProofLines(
     ok: boolean;
     sessionId: string;
     initialTest: { exitCode: number };
-    agent: { mode: string; exitCode: number };
+    agent: {
+      mode: string;
+      exitCode: number;
+      model?: string;
+      quotaFallbackUsed?: boolean;
+      attempts?: AgentAttempt[];
+    };
     phoenix: PhoenixSessionEvidence;
     causalTrace: CausalTraceEvidence;
     repair: {
@@ -746,6 +829,12 @@ function printProofLines(
   );
   console.log(
     `AGENT_REPAIR: ${report.agent.exitCode === 0 ? 'PASS' : 'FAIL'} mode=${report.agent.mode}`,
+  );
+  console.log(
+    `MODEL_USED: ${report.agent.model ?? 'unknown'} attempts=${report.agent.attempts?.length ?? 1}`,
+  );
+  console.log(
+    `MODEL_FALLBACK: ${report.agent.quotaFallbackUsed ? 'PASS reason=quota' : 'SKIPPED'}`,
   );
   console.log(
     `FAILED_TOOL_SPAN: ${report.phoenix.failedToolSpan ? 'PASS' : report.agent.mode === 'substitute' ? 'DEGRADED' : 'FAIL'}`,
