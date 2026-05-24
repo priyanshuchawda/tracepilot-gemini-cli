@@ -11,6 +11,7 @@ const phoenixMcpLaunchers = [
   'packages/core/src/telemetry/phoenixSelfIntrospection.ts',
   'scripts/phoenix-mcp-smoke.mjs',
   'scripts/demo-broken-node-app.ts',
+  'scripts/demo-gemini-repair-agent.ts',
 ];
 const defaultPackageSpec = '@arizeai/phoenix-mcp@4.0.13';
 const floatingPackageSpec = ['@arizeai/phoenix-mcp', 'latest'].join('@');

@@ -10,6 +10,7 @@ import type { Config } from '../config/config.js';
 import type { ErroredToolCall } from '../scheduler/types.js';
 import { MCPServerStatus, type McpClient } from '../tools/mcp-client.js';
 import type { McpClientManager } from '../tools/mcp-client-manager.js';
+import { SHELL_TOOL_NAME } from '../tools/tool-names.js';
 import type { AnyDeclarativeTool } from '../tools/tools.js';
 import { getErrorMessage } from '../utils/errors.js';
 import { safeJsonStringify } from '../utils/safeJsonStringify.js';
@@ -36,7 +37,7 @@ import { flushTelemetry } from './sdk.js';
 import { runInDevTraceSpan } from './trace.js';
 
 const PHOENIX_MCP_TOOL_NAME = 'get-spans';
-const DEFAULT_TIMEOUT_MS = 20000;
+const DEFAULT_TIMEOUT_MS = 180000;
 const DIRECT_PHOENIX_MCP_SERVER_NAME = 'tracepilot-phoenix-env';
 const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
 const PHOENIX_MCP_PACKAGE_ENV = 'TRACEPILOT_PHOENIX_MCP_PACKAGE';
@@ -138,8 +139,11 @@ export async function queryPhoenixForFailedToolCall(
         status: call.status,
       };
 
-      const args = buildPhoenixGetSpansArgs(config.getSessionId());
-      const phoenixQuery = getPhoenixMcpQuery(config, args);
+      const args = buildPhoenixGetSpansArgs(
+        config.getSessionId(),
+        call.request.name,
+      );
+      const phoenixQuery = getPhoenixMcpQuery(config, args, timeoutMs);
       if (!phoenixQuery) {
         const result: PhoenixSelfIntrospectionResult = {
           attempted: false,
@@ -269,7 +273,7 @@ export async function queryPhoenixForHistoricalRepairs(
       };
 
       const args = buildPhoenixHistoricalRepairArgs(signature);
-      const phoenixQuery = getPhoenixMcpQuery(config, args);
+      const phoenixQuery = getPhoenixMcpQuery(config, args, timeoutMs);
       if (!phoenixQuery) {
         const result: PhoenixHistoricalRepairQueryResult = {
           attempted: false,
@@ -373,6 +377,7 @@ export async function queryPhoenixForHistoricalRepairs(
 function getPhoenixMcpQuery(
   config: Config,
   args: Record<string, unknown>,
+  timeoutMs: number,
 ):
   | {
       serverName: string;
@@ -398,7 +403,7 @@ function getPhoenixMcpQuery(
 
   return {
     serverName: DIRECT_PHOENIX_MCP_SERVER_NAME,
-    execute: () => callDirectPhoenixMcpGetSpans(args, directConfig),
+    execute: () => callDirectPhoenixMcpGetSpans(args, directConfig, timeoutMs),
   };
 }
 
@@ -423,6 +428,7 @@ function resolveDirectPhoenixMcpConfig(
 async function callDirectPhoenixMcpGetSpans(
   args: Record<string, unknown>,
   directConfig: DirectPhoenixMcpConfig,
+  timeoutMs: number,
 ): Promise<PhoenixMcpToolResult> {
   const transport = new StdioClientTransport({
     command: 'npx',
@@ -441,10 +447,14 @@ async function callDirectPhoenixMcpGetSpans(
 
   try {
     await client.connect(transport);
-    const result = await client.callTool({
-      name: PHOENIX_MCP_TOOL_NAME,
-      arguments: args,
-    });
+    const result = await client.callTool(
+      {
+        name: PHOENIX_MCP_TOOL_NAME,
+        arguments: args,
+      },
+      undefined,
+      { timeout: timeoutMs },
+    );
     const text = getTextContent(result);
     if (result.isError) {
       return {
@@ -524,16 +534,22 @@ function normalizeToolName(value: string): string {
   return value.toLowerCase().replaceAll('-', '_');
 }
 
-function buildPhoenixGetSpansArgs(sessionId: string): Record<string, unknown> {
+function buildPhoenixGetSpansArgs(
+  sessionId: string,
+  toolName: string,
+): Record<string, unknown> {
   const startTime = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const args: Record<string, unknown> = {
     start_time: startTime,
-    names: [
-      GeminiCliOperation.ToolShell,
-      GeminiCliOperation.ToolFile,
-      GeminiCliOperation.ToolMcp,
-      GeminiCliOperation.ToolPhoenixMcp,
-    ],
+    names:
+      toolName === SHELL_TOOL_NAME
+        ? [GeminiCliOperation.ToolShell]
+        : [
+            GeminiCliOperation.ToolShell,
+            GeminiCliOperation.ToolFile,
+            GeminiCliOperation.ToolMcp,
+            GeminiCliOperation.ToolPhoenixMcp,
+          ],
     limit: 20,
     session_id: sessionId,
   };

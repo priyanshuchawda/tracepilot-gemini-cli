@@ -35,6 +35,7 @@ import {
 const execFileAsync = promisify(execFile);
 const EXPECTED_API_BASE_URL = 'https://api.example.test';
 const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
+const PHOENIX_MCP_QUERY_TIMEOUT_MS = 180_000;
 
 interface CliOptions {
   workdir: string;
@@ -344,15 +345,19 @@ async function queryPhoenixMcp(
 
     const startTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     for (let attempt = 1; attempt <= 4; attempt++) {
-      const result = await client.callTool({
-        name: 'get-spans',
-        arguments: {
-          project_identifier: process.env['PHOENIX_PROJECT'],
-          start_time: startTime,
-          names: ['gemini_cli.tool.shell'],
-          limit: 100,
+      const result = await client.callTool(
+        {
+          name: 'get-spans',
+          arguments: {
+            project_identifier: process.env['PHOENIX_PROJECT'],
+            start_time: startTime,
+            names: ['gemini_cli.tool.shell'],
+            limit: 100,
+          },
         },
-      });
+        undefined,
+        { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+      );
       const spans = getSpanList(parseJsonText(getTextContent(result)));
       const span = spans.find((candidate) => {
         const attributes = getRecord(candidate['attributes']);

@@ -178,7 +178,7 @@ describe('phoenix self introspection', () => {
     expect(result.evidence?.outputPreview).not.toContain('sk-proj-redacted');
     expect(buildAndExecute).toHaveBeenCalledWith(
       expect.objectContaining({
-        names: expect.arrayContaining(['gemini_cli.tool.shell']),
+        names: [GeminiCliOperation.ToolShell],
         limit: 20,
       }),
       expect.any(AbortSignal),
@@ -346,6 +346,7 @@ describe('phoenix self introspection', () => {
     const result = await queryPhoenixForFailedToolCall(
       config,
       makeFailedShellCall(),
+      123456,
     );
 
     expect(result).toMatchObject({
@@ -368,13 +369,17 @@ describe('phoenix self introspection', () => {
         }),
       }),
     );
-    expect(mcpClient.callTool).toHaveBeenCalledWith({
-      name: 'get-spans',
-      arguments: expect.objectContaining({
-        project_identifier: 'tracepilot-test',
-        session_id: 'session-1',
-      }),
-    });
+    expect(mcpClient.callTool).toHaveBeenCalledWith(
+      {
+        name: 'get-spans',
+        arguments: expect.objectContaining({
+          project_identifier: 'tracepilot-test',
+          session_id: 'session-1',
+        }),
+      },
+      undefined,
+      { timeout: 123456 },
+    );
     expect(runInDevTraceSpan).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: GeminiCliOperation.ToolPhoenixMcp,

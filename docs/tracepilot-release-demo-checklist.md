@@ -14,6 +14,8 @@ designed to prevent demo polish from hiding unverified Phoenix integration.
 - `npm run smoke:phoenix:mcp` passes and reports the smoke span as visible and
   queryable.
 - `npm run demo:broken-node-app` passes without `--allow-missing-phoenix`.
+- `npm run demo:gemini-repair-agent` passes without `--allow-missing-phoenix`;
+  use this command for the agent-repair video.
 - The generated demo report contains no raw API keys, bearer tokens,
   authorization headers, private keys, database URLs, or `.env` contents.
 
@@ -42,7 +44,30 @@ Offline demo evidence must not claim:
 - real self-introspection against Phoenix Cloud
 - complete MVP end-to-end proof
 
-## Strict Demo Command
+## Video-Ready Gemini Demo Command
+
+This local command does not require Cloud Run or CI/CD. Build the CLI once, then
+run Gemini 3 (`gemini-3.5-flash`) against the three-failure checkout-service
+fixture:
+
+```powershell
+npm run build
+npm run demo:gemini-repair-agent -- --env-file C:\path\to\tracepilot-gemini-cli\.env
+```
+
+Required proof lines:
+
+- `AGENT_REPAIR: PASS mode=gemini`
+- `FAILED_TOOL_SPAN: PASS`
+- `PHOENIX_MCP_INTROSPECTION: PASS`
+- `FILES_CHANGED: PASS count=3`
+- `RETRY_TEST: PASS`
+- `EVALS: PASS`
+
+Show the printed session ID in Phoenix to demonstrate that Gemini's failed test
+run and the Phoenix MCP self-introspection spans belong to the recorded repair.
+
+## Deterministic Strict Demo Command
 
 Use this only after Phoenix env is configured:
 
@@ -86,6 +111,9 @@ Latest strict evidence:
 - Strict broken-node demo: passed for session
   `tracepilot-broken-node-app-1778699160588`.
 - Strict demo trace evidence: `de13112b1dadd28dda63a83365d92344`.
+- Live Gemini 3.5 repair demo: passed for session
+  `tracepilot-gemini-repair-1779628389727`; Phoenix MCP introspection,
+  three-file repair, retry tests, and eval gates passed.
 - Self-introspection regression coverage: matching failed spans are preferred,
   and empty Phoenix span responses degrade without claiming trace evidence.
 
