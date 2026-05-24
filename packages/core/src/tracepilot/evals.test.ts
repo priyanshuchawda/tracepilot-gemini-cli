@@ -63,6 +63,23 @@ describe('TracePilot deterministic eval runner', () => {
     expect(redaction?.status).toBe('fail');
     expect(JSON.stringify(report)).not.toContain('sk-proj-secret');
   });
+
+  it('requires observed safety-block evidence', () => {
+    const evidence = makePassingEvidence();
+    evidence.safety = {
+      command: 'rm -rf /',
+      blocked: true,
+      reason: 'hardcoded fixture without observed policy decision',
+    };
+
+    const report = runTracePilotEvals(evidence);
+    const safety = report.results.find(
+      (result) => result.id === 'blocked_destructive_command',
+    );
+
+    expect(report.ok).toBe(false);
+    expect(safety?.status).toBe('fail');
+  });
 });
 
 function makePassingEvidence(): TracePilotEvalEvidence {
@@ -82,6 +99,8 @@ function makePassingEvidence(): TracePilotEvalEvidence {
     safety: {
       command: 'rm -rf /',
       blocked: true,
+      observed: true,
+      level: 'blocked',
       reason: 'blocked destructive command',
     },
     redaction: {

@@ -48,6 +48,8 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     const report = JSON.parse(readFileSync(output, 'utf8'));
     expect(stdout).toContain('AGENT_REPAIR: PASS');
     expect(stdout).toContain('PHOENIX_MCP_INTROSPECTION: DEGRADED');
+    expect(stdout).toContain('CAUSAL_TRACE: DEGRADED');
+    expect(stdout).toContain('SAFETY_BLOCK: PASS');
     expect(stdout).toContain('VERIFIED_REPAIR_RECORDED: DEGRADED');
     expect(stdout).toContain('FILES_CHANGED: PASS count=3');
     expect(stdout).toContain('RETRY_TEST: PASS');
@@ -56,6 +58,12 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     expect(report.agent.mode).toBe('substitute');
     expect(report.repair.changedFiles).toHaveLength(3);
     expect(report.repair.verifiedOutcomeRecorded).toBe(false);
+    expect(report.causalTrace.chainComplete).toBe(false);
+    expect(
+      report.eval.results.find(
+        (result: { id: string }) => result.id === 'blocked_destructive_command',
+      )?.evidence,
+    ).toMatchObject({ observed: true, level: 'blocked' });
     expect(report.eval.results).toHaveLength(7);
     expect(JSON.stringify(report)).not.toContain('videoSecretToken');
   }, 180000);

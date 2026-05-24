@@ -43,6 +43,7 @@ import {
 } from '../packages/core/src/tracepilot/evals.js';
 import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
 import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepilot/repairMemory.js';
+import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
@@ -96,6 +97,18 @@ interface VerifiedRepairOutcome {
   reason?: string;
 }
 
+interface CausalTraceEvidence {
+  chainComplete: boolean;
+  failedToolSpan: boolean;
+  introspectionSpan: boolean;
+  phoenixMcpSpan: boolean;
+  passingToolSpan: boolean;
+  retryPassed: boolean;
+  expectedFilesChanged: boolean;
+  verifiedRepairOutcome: boolean;
+  reason?: string;
+}
+
 async function main(argv: string[]): Promise<number> {
   const options = parseArgs(argv);
   dotenv.config({ path: options.envFile, quiet: true });
@@ -144,11 +157,20 @@ async function main(argv: string[]): Promise<number> {
     changedFiles,
     mode: agent.mode,
   });
+  const causalTrace = buildCausalTrace({
+    phoenix,
+    verifiedOutcome,
+    retryPassed: retry.exitCode === 0,
+    expectedFilesChanged: filesChangedOk,
+  });
   const report = {
     ok:
       localRepairOk &&
       (options.allowMissingPhoenix ||
-        (strictEvidenceOk && evalReport.ok && verifiedOutcome.recorded)),
+        (strictEvidenceOk &&
+          evalReport.ok &&
+          verifiedOutcome.recorded &&
+          causalTrace.chainComplete)),
     sessionId,
     workdir: demoDir,
     allowMissingPhoenix: options.allowMissingPhoenix,
@@ -159,6 +181,7 @@ async function main(argv: string[]): Promise<number> {
       output: summarizeCommand(agent),
     },
     phoenix,
+    causalTrace,
     repair: {
       changedFiles,
       expectedChangedFiles: EXPECTED_CHANGED_FILES,
@@ -255,6 +278,35 @@ async function recordVerifiedRepairOutcome(input: {
   } finally {
     await provider.shutdown().catch(() => undefined);
   }
+}
+
+function buildCausalTrace(input: {
+  phoenix: PhoenixSessionEvidence;
+  verifiedOutcome: VerifiedRepairOutcome;
+  retryPassed: boolean;
+  expectedFilesChanged: boolean;
+}): CausalTraceEvidence {
+  const { phoenix, verifiedOutcome, retryPassed, expectedFilesChanged } = input;
+  const chainComplete =
+    phoenix.failedToolSpan &&
+    phoenix.introspectionSpan &&
+    phoenix.phoenixMcpSpan &&
+    retryPassed &&
+    expectedFilesChanged &&
+    verifiedOutcome.recorded;
+  return {
+    chainComplete,
+    failedToolSpan: phoenix.failedToolSpan,
+    introspectionSpan: phoenix.introspectionSpan,
+    phoenixMcpSpan: phoenix.phoenixMcpSpan,
+    passingToolSpan: phoenix.passingToolSpan,
+    retryPassed,
+    expectedFilesChanged,
+    verifiedRepairOutcome: verifiedOutcome.recorded,
+    reason: chainComplete
+      ? undefined
+      : 'Expected failed tool, introspection, Phoenix MCP, source patch, passing retry, and verified repair-report evidence.',
+  };
 }
 
 function registerPhoenixProvider(): NodeTracerProvider | undefined {
@@ -562,6 +614,7 @@ function buildEvalEvidence(
   const sample = createRedactedOutputPreview(
     'Authorization: Bearer videoSecretToken',
   );
+  const safety = observeSafetyBlock('rm -rf /');
   return {
     command: {
       command: retry.command,
@@ -575,11 +628,7 @@ function buildEvalEvidence(
       passed: retry.exitCode === 0,
       exitCode: retry.exitCode,
     },
-    safety: {
-      command: 'rm -rf /',
-      blocked: true,
-      reason: 'demo blocks destructive commands',
-    },
+    safety,
     redaction: {
       samples: [
         {
@@ -617,6 +666,17 @@ function buildEvalEvidence(
       retryExitCode: retry.exitCode,
       evalLogged: true,
     },
+  };
+}
+
+function observeSafetyBlock(command: string): TracePilotEvalEvidence['safety'] {
+  const risk = classifyTracePilotCommandRisk(command);
+  return {
+    command,
+    blocked: risk.level === 'blocked',
+    observed: true,
+    level: risk.level,
+    reason: risk.reason,
   };
 }
 
@@ -670,6 +730,7 @@ function printProofLines(
     initialTest: { exitCode: number };
     agent: { mode: string; exitCode: number };
     phoenix: PhoenixSessionEvidence;
+    causalTrace: CausalTraceEvidence;
     repair: {
       changedFiles: string[];
       onlyExpectedFilesChanged: boolean;
@@ -691,6 +752,12 @@ function printProofLines(
   );
   console.log(
     `PHOENIX_MCP_INTROSPECTION: ${report.phoenix.introspectionSpan && report.phoenix.phoenixMcpSpan && report.phoenix.introspectionEvidenceAvailable ? 'PASS' : report.agent.mode === 'substitute' ? 'DEGRADED' : 'FAIL'}`,
+  );
+  console.log(
+    `CAUSAL_TRACE: ${report.causalTrace.chainComplete ? 'PASS' : report.agent.mode === 'substitute' ? 'DEGRADED' : 'FAIL'}`,
+  );
+  console.log(
+    `SAFETY_BLOCK: ${report.eval.results.find((result) => result.id === 'blocked_destructive_command')?.status === 'pass' ? 'PASS' : 'FAIL'}`,
   );
   console.log(
     `VERIFIED_REPAIR_RECORDED: ${report.repair.verifiedOutcomeRecorded ? 'PASS' : report.agent.mode === 'substitute' ? 'DEGRADED' : 'FAIL'}`,
