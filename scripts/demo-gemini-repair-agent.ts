@@ -22,7 +22,18 @@ import dotenv from 'dotenv';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
+  register,
+  trace,
+  type NodeTracerProvider,
+} from '@arizeai/phoenix-otel';
+import {
   GEMINI_CLI_COMMAND_EXIT_CODE,
+  GEMINI_CLI_OUTPUT_SHA256,
+  GEMINI_CLI_REPAIR_FINGERPRINT,
+  GEMINI_CLI_REPAIR_ROOT_CAUSE,
+  GEMINI_CLI_REPAIR_SIGNATURE_ID,
+  GEMINI_CLI_REPAIR_STRATEGY,
+  GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
   GeminiCliOperation,
 } from '../packages/core/src/telemetry/constants.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
@@ -30,6 +41,8 @@ import {
   runTracePilotEvals,
   type TracePilotEvalEvidence,
 } from '../packages/core/src/tracepilot/evals.js';
+import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
+import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepilot/repairMemory.js';
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
@@ -75,6 +88,14 @@ interface AgentResult extends CommandResult {
   mode: 'gemini' | 'substitute';
 }
 
+interface VerifiedRepairOutcome {
+  attempted: boolean;
+  recorded: boolean;
+  signatureId?: string;
+  repairFingerprint?: string;
+  reason?: string;
+}
+
 async function main(argv: string[]): Promise<number> {
   const options = parseArgs(argv);
   dotenv.config({ path: options.envFile, quiet: true });
@@ -111,10 +132,23 @@ async function main(argv: string[]): Promise<number> {
     phoenix.phoenixMcpSpan &&
     phoenix.introspectionSpan &&
     phoenix.introspectionEvidenceAvailable;
+  const verifiedOutcome = await recordVerifiedRepairOutcome({
+    eligible:
+      agent.mode === 'gemini' &&
+      localRepairOk &&
+      strictEvidenceOk &&
+      evalReport.ok,
+    sessionId,
+    initial,
+    retry,
+    changedFiles,
+    mode: agent.mode,
+  });
   const report = {
     ok:
       localRepairOk &&
-      (options.allowMissingPhoenix || (strictEvidenceOk && evalReport.ok)),
+      (options.allowMissingPhoenix ||
+        (strictEvidenceOk && evalReport.ok && verifiedOutcome.recorded)),
     sessionId,
     workdir: demoDir,
     allowMissingPhoenix: options.allowMissingPhoenix,
@@ -129,6 +163,8 @@ async function main(argv: string[]): Promise<number> {
       changedFiles,
       expectedChangedFiles: EXPECTED_CHANGED_FILES,
       onlyExpectedFilesChanged: filesChangedOk,
+      verifiedOutcomeRecorded: verifiedOutcome.recorded,
+      verifiedOutcome,
     },
     retryTest: summarizeCommand(retry),
     eval: evalReport,
@@ -144,6 +180,101 @@ async function main(argv: string[]): Promise<number> {
   return report.ok ? 0 : 1;
 }
 
+async function recordVerifiedRepairOutcome(input: {
+  eligible: boolean;
+  sessionId: string;
+  initial: CommandResult;
+  retry: CommandResult;
+  changedFiles: string[];
+  mode: AgentResult['mode'];
+}): Promise<VerifiedRepairOutcome> {
+  if (!input.eligible) {
+    return {
+      attempted: false,
+      recorded: false,
+      reason:
+        input.mode === 'substitute'
+          ? 'Controlled substitute agent does not publish Phoenix repair outcomes.'
+          : 'Strict repair and Phoenix evidence gates did not all pass.',
+    };
+  }
+  const provider = registerPhoenixProvider();
+  if (!provider) {
+    return {
+      attempted: false,
+      recorded: false,
+      reason: 'Phoenix exporter env is missing for verified outcome recording.',
+    };
+  }
+  const initialOutput = createRedactedOutputPreview(
+    `${input.initial.stdout}\n${input.initial.stderr}`,
+  );
+  const signature = buildTracePilotFailureSignature({
+    command: input.initial.command,
+    exitCode: input.initial.exitCode,
+    outputPreview: initialOutput.preview,
+    outputSha256: initialOutput.sha256,
+  });
+  const strategy = [
+    'Reuse the verified minimal checkout-service source repair for a matching failed-test signature.',
+    'Rerun the failed test command after applying the minimal source-only patch.',
+  ];
+  const repairFingerprint = createTracePilotRepairFingerprint({
+    strategy,
+    filesModified: input.changedFiles,
+    verificationCommands: [input.retry.command],
+  });
+  try {
+    const span = trace
+      .getTracer('tracepilot-gemini-repair-demo')
+      .startSpan(GeminiCliOperation.RepairReport, {
+        attributes: {
+          'session.id': input.sessionId,
+          [GEMINI_CLI_REPAIR_SIGNATURE_ID]: signature.id,
+          [GEMINI_CLI_REPAIR_ROOT_CAUSE]: signature.taxonomy,
+          [GEMINI_CLI_REPAIR_FINGERPRINT]: repairFingerprint,
+          [GEMINI_CLI_REPAIR_STRATEGY]: JSON.stringify(strategy),
+          [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
+          [GEMINI_CLI_OUTPUT_SHA256]: initialOutput.sha256,
+        },
+      });
+    span.end();
+    await provider.forceFlush();
+    return {
+      attempted: true,
+      recorded: true,
+      signatureId: signature.id,
+      repairFingerprint,
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      recorded: false,
+      reason: `Phoenix verified outcome recording failed: ${getErrorMessage(error)}`,
+    };
+  } finally {
+    await provider.shutdown().catch(() => undefined);
+  }
+}
+
+function registerPhoenixProvider(): NodeTracerProvider | undefined {
+  const apiKey = process.env['PHOENIX_API_KEY']?.trim();
+  const project = process.env['PHOENIX_PROJECT']?.trim();
+  const url =
+    process.env['PHOENIX_COLLECTOR_ENDPOINT']?.trim() ??
+    process.env['PHOENIX_BASE_URL']?.trim();
+  if (!apiKey || !project || !url) {
+    return undefined;
+  }
+  return register({
+    apiKey,
+    projectName: project,
+    url,
+    batch: false,
+    global: true,
+  });
+}
+
 function parseArgs(argv: string[]): Options {
   const options: Options = {
     workdir: path.join(tmpdir(), 'tracepilot-demo-gemini-repair'),
@@ -151,7 +282,7 @@ function parseArgs(argv: string[]): Options {
     allowMissingPhoenix: false,
     envFile: path.resolve('.env'),
     cliPath: path.resolve('packages/cli/dist/index.js'),
-    model: 'gemini-3.5-flash',
+    model: 'gemini-3.1-flash-lite-preview',
   };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
@@ -539,7 +670,11 @@ function printProofLines(
     initialTest: { exitCode: number };
     agent: { mode: string; exitCode: number };
     phoenix: PhoenixSessionEvidence;
-    repair: { changedFiles: string[]; onlyExpectedFilesChanged: boolean };
+    repair: {
+      changedFiles: string[];
+      onlyExpectedFilesChanged: boolean;
+      verifiedOutcomeRecorded: boolean;
+    };
     retryTest: { exitCode: number };
     eval: { ok: boolean };
   },
@@ -556,6 +691,9 @@ function printProofLines(
   );
   console.log(
     `PHOENIX_MCP_INTROSPECTION: ${report.phoenix.introspectionSpan && report.phoenix.phoenixMcpSpan && report.phoenix.introspectionEvidenceAvailable ? 'PASS' : report.agent.mode === 'substitute' ? 'DEGRADED' : 'FAIL'}`,
+  );
+  console.log(
+    `VERIFIED_REPAIR_RECORDED: ${report.repair.verifiedOutcomeRecorded ? 'PASS' : report.agent.mode === 'substitute' ? 'DEGRADED' : 'FAIL'}`,
   );
   console.log(
     `FILES_CHANGED: ${report.repair.onlyExpectedFilesChanged ? 'PASS' : 'FAIL'} count=${report.repair.changedFiles.length}`,

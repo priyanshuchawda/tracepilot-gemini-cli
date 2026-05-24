@@ -83,6 +83,8 @@
     "demo:broken-node-app:offline": "tsx scripts/demo-broken-node-app.ts --allow-missing-phoenix",
     "demo:gemini-repair-agent": "tsx scripts/demo-gemini-repair-agent.ts",
     "demo:gemini-repair-agent:offline": "tsx scripts/demo-gemini-repair-agent.ts --allow-missing-phoenix --agent-script scripts/testing/fake-checkout-repair-agent.mjs",
+    "demo:phoenix-repair-memory": "tsx scripts/demo-phoenix-repair-memory-replay.ts",
+    "demo:phoenix-repair-memory:controlled": "tsx scripts/demo-phoenix-repair-memory-replay.ts --controlled-runner-script scripts/testing/fake-phoenix-repair-memory-runner.mjs",
     "check:lockfile": "node scripts/check-lockfile.js",
     "clean": "node scripts/clean.js",
     "pre-commit": "node scripts/pre-commit.js"

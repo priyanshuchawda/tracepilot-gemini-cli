@@ -75,9 +75,9 @@ the [release and demo checklist](tracepilot-release-demo-checklist.md) before
 recording or submitting demo evidence.
 
 For the video-ready agent path, use the richer checkout-service fixture. This
-path launches the real local Gemini CLI with `gemini-3.5-flash`, lets it
-discover and repair three independent failures, and queries Phoenix MCP for the
-same Gemini session:
+path launches the real local Gemini CLI with `gemini-3.1-flash-lite-preview`,
+lets it discover and repair three independent failures, and queries Phoenix MCP
+for the same Gemini session:
 
 ```powershell
 npm run build
@@ -95,6 +95,17 @@ npm run demo:gemini-repair-agent:offline
 
 Do not describe the offline substitute as autonomous Gemini or Phoenix MCP
 proof; only the strict command provides that evidence.
+
+For the self-improvement proof, run two strict repair sessions. The seed session
+records its verified repair outcome in Phoenix, and the replay session must
+retrieve that seed through Phoenix MCP before it can pass:
+
+```powershell
+npm run demo:phoenix-repair-memory -- --env-file C:\path\to\tracepilot-gemini-cli\.env
+```
+
+The companion `demo:phoenix-repair-memory:controlled` command validates output
+formatting only; its `SIMULATED` lines are not live Gemini or Phoenix proof.
 
 ## Hosted Cloud Run Demo
 
@@ -159,26 +170,27 @@ Do not paste keys into issue comments, PR descriptions, or terminal logs.
 
 ## Verification Matrix
 
-| Feature                 | Command/test                                                | Status                           | Evidence                                                                                                                                                                     |
-| ----------------------- | ----------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Baseline install        | `npm ci`                                                    | Working                          | Passed in audit baseline.                                                                                                                                                    |
-| Build                   | `npm run build`                                             | Working                          | Passed during P0/P1 issue verification.                                                                                                                                      |
-| Lint                    | `npm run lint`                                              | Working                          | Passed during P0/P1 issue verification.                                                                                                                                      |
-| Typecheck               | `npm run typecheck`                                         | Working                          | Passed during P0/P1 issue verification.                                                                                                                                      |
-| Root tests              | `npm test`                                                  | Unverified/long                  | Local audit run exceeded 30 minutes; use focused tests until CI is partitioned.                                                                                              |
-| Phoenix OTEL export     | `npm run smoke:phoenix`                                     | Env-dependent                    | Requires `PHOENIX_API_KEY` and collector/base URL.                                                                                                                           |
-| Phoenix MCP visibility  | `npm run smoke:phoenix:mcp`                                 | Working                          | Passed for session `tracepilot-mcp-smoke-1778699158476`; Phoenix MCP returned span `gemini_cli.agent_turn`.                                                                  |
-| Agent/LLM spans         | Core telemetry tests                                        | Working                          | Span names and OpenInference kinds are covered.                                                                                                                              |
-| Tool spans              | Scheduler/tool tests                                        | Working                          | Shell, file, MCP, and Phoenix MCP tool spans carry safe metadata.                                                                                                            |
-| Redaction               | Sanitizer/eval/demo tests                                   | Working for implemented patterns | API keys, bearer tokens, private keys, env assignments, and similar secrets are redacted.                                                                                    |
-| Command safety          | Policy tests                                                | Working                          | Blocked/high/medium/low risk classification is covered.                                                                                                                      |
-| Self-introspection      | Phoenix introspection, scheduler tests, and strict demo     | Working                          | Failure path queries Phoenix MCP, selects matching failed span evidence, and degrades when evidence is absent.                                                               |
-| Repair planner          | `packages/core/src/tracepilot/repairPlanner.test.ts`        | Working locally                  | Planner consumes structured trace evidence and emits `gemini_cli.chain.repair_plan`.                                                                                         |
-| Evals                   | `npm run test:scripts`                                      | Working locally                  | Required deterministic eval IDs produce sanitized JSON.                                                                                                                      |
-| Broken demo             | `npm run demo:broken-node-app`                              | Working                          | Strict demo passed with Phoenix-visible trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals.                                                                |
-| Live Gemini repair demo | `npm run demo:gemini-repair-agent`                          | Working locally                  | Gemini 3.5 repaired three checkout-service failures in session `tracepilot-gemini-repair-1779628389727`; failed-tool, successful MCP evidence, retry, and eval gates passed. |
-| Cloud Run local smoke   | `npm run smoke:cloud-run:local`                             | Working locally                  | Verifies health/status/demo endpoints without requiring Phoenix secrets.                                                                                                     |
-| Cloud Run live smoke    | `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` | Not currently deployed           | User intentionally removed Cloud Run for now; redeploy and re-run smoke before sharing a URL.                                                                                |
+| Feature                      | Command/test                                                | Status                           | Evidence                                                                                                                                                                     |
+| ---------------------------- | ----------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Baseline install             | `npm ci`                                                    | Working                          | Passed in audit baseline.                                                                                                                                                    |
+| Build                        | `npm run build`                                             | Working                          | Passed during P0/P1 issue verification.                                                                                                                                      |
+| Lint                         | `npm run lint`                                              | Working                          | Passed during P0/P1 issue verification.                                                                                                                                      |
+| Typecheck                    | `npm run typecheck`                                         | Working                          | Passed during P0/P1 issue verification.                                                                                                                                      |
+| Root tests                   | `npm test`                                                  | Unverified/long                  | Local audit run exceeded 30 minutes; use focused tests until CI is partitioned.                                                                                              |
+| Phoenix OTEL export          | `npm run smoke:phoenix`                                     | Env-dependent                    | Requires `PHOENIX_API_KEY` and collector/base URL.                                                                                                                           |
+| Phoenix MCP visibility       | `npm run smoke:phoenix:mcp`                                 | Working                          | Passed for session `tracepilot-mcp-smoke-1778699158476`; Phoenix MCP returned span `gemini_cli.agent_turn`.                                                                  |
+| Agent/LLM spans              | Core telemetry tests                                        | Working                          | Span names and OpenInference kinds are covered.                                                                                                                              |
+| Tool spans                   | Scheduler/tool tests                                        | Working                          | Shell, file, MCP, and Phoenix MCP tool spans carry safe metadata.                                                                                                            |
+| Redaction                    | Sanitizer/eval/demo tests                                   | Working for implemented patterns | API keys, bearer tokens, private keys, env assignments, and similar secrets are redacted.                                                                                    |
+| Command safety               | Policy tests                                                | Working                          | Blocked/high/medium/low risk classification is covered.                                                                                                                      |
+| Self-introspection           | Phoenix introspection, scheduler tests, and strict demo     | Working                          | Failure path queries Phoenix MCP, selects matching failed span evidence, and degrades when evidence is absent.                                                               |
+| Repair planner               | `packages/core/src/tracepilot/repairPlanner.test.ts`        | Working locally                  | Planner consumes structured trace evidence and emits `gemini_cli.chain.repair_plan`.                                                                                         |
+| Evals                        | `npm run test:scripts`                                      | Working locally                  | Required deterministic eval IDs produce sanitized JSON.                                                                                                                      |
+| Broken demo                  | `npm run demo:broken-node-app`                              | Working                          | Strict demo passed with Phoenix-visible trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals.                                                                |
+| Live Gemini repair demo      | `npm run demo:gemini-repair-agent`                          | Working locally                  | Gemini 3.5 repaired three checkout-service failures in session `tracepilot-gemini-repair-1779628389727`; failed-tool, successful MCP evidence, retry, and eval gates passed. |
+| Phoenix repair memory replay | `npm run demo:phoenix-repair-memory`                        | Working locally                  | Seed `tracepilot-gemini-repair-1779647335678` and replay `tracepilot-gemini-repair-1779647437009` passed; replay `repair_memory_retrieve` telemetry referenced the seed.     |
+| Cloud Run local smoke        | `npm run smoke:cloud-run:local`                             | Working locally                  | Verifies health/status/demo endpoints without requiring Phoenix secrets.                                                                                                     |
+| Cloud Run live smoke         | `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` | Not currently deployed           | User intentionally removed Cloud Run for now; redeploy and re-run smoke before sharing a URL.                                                                                |
 
 ## Latest Strict Proof
 
@@ -201,6 +213,11 @@ not print raw secret values:
   `tracepilot-gemini-repair-1779628389727`; Gemini 3.5 changed only the three
   intended source files, Phoenix MCP introspection reported available evidence,
   retry tests passed, and all eval gates passed.
+- `npm run demo:phoenix-repair-memory`: strict live proof passed with seed
+  session `tracepilot-gemini-repair-1779647335678` and replay session
+  `tracepilot-gemini-repair-1779647437009`; the replay repair-memory retrieval
+  included the seed session's verified repair outcome, retry tests passed, and
+  eval gates passed.
 
 Treat any credentials pasted into chat or shared transcripts as compromised and
 rotate them before final public submission.

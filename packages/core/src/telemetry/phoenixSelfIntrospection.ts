@@ -560,29 +560,21 @@ function buildPhoenixGetSpansArgs(
 }
 
 function buildPhoenixHistoricalRepairArgs(
-  signature: TracePilotFailureSignature,
+  _signature: TracePilotFailureSignature,
 ): Record<string, unknown> {
   const startTime = new Date(
     Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).toISOString();
   const args: Record<string, unknown> = {
     start_time: startTime,
-    names: [
-      GeminiCliOperation.RepairPlan,
-      GeminiCliOperation.RepairReport,
-      GeminiCliOperation.RepairEval,
-      GeminiCliOperation.RepairVerify,
-      GeminiCliOperation.ToolShell,
-    ],
-    limit: 100,
+    names: [GeminiCliOperation.RepairReport],
+    limit: 20,
   };
   if (process.env['PHOENIX_PROJECT']) {
     args['project_identifier'] = process.env['PHOENIX_PROJECT'];
   }
-  // Phoenix MCP versions vary in filter support; this query remains broad and
-  // filtering is deterministic client-side.
-  args['query'] =
-    `${signature.id} ${signature.taxonomy} ${signature.outputSha256 ?? ''}`.trim();
+  // Query only verified outcome spans, then score relevance client-side. Text
+  // filters can hide a reusable repair when output hashes differ between runs.
   return args;
 }
 
