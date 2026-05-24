@@ -27,7 +27,12 @@ describe('scripts/tracepilot-evals.ts', () => {
           outputSha256: 'a'.repeat(64),
         },
         test: { command: 'npm test', passed: true, exitCode: 0 },
-        safety: { command: 'rm -rf /', blocked: true },
+        safety: {
+          command: 'rm -rf /',
+          blocked: true,
+          observed: true,
+          level: 'blocked',
+        },
         redaction: {
           samples: [
             {
