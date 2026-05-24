@@ -6,6 +6,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 dotenv.config({ quiet: true });
 
 const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
+const PHOENIX_MCP_QUERY_TIMEOUT_MS = 180_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const secretValues = [
@@ -219,15 +220,19 @@ async function querySmokeSpan(sessionId, host) {
     const startTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     let lastError = '';
     for (let attempt = 1; attempt <= 8; attempt++) {
-      const result = await client.callTool({
-        name: 'get-spans',
-        arguments: {
-          project_identifier: process.env.PHOENIX_PROJECT,
-          start_time: startTime,
-          names: ['gemini_cli.agent_turn'],
-          limit: 100,
+      const result = await client.callTool(
+        {
+          name: 'get-spans',
+          arguments: {
+            project_identifier: process.env.PHOENIX_PROJECT,
+            start_time: startTime,
+            names: ['gemini_cli.agent_turn'],
+            limit: 100,
+          },
         },
-      });
+        undefined,
+        { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+      );
 
       const text = getTextContent(result);
       if (result.isError) {

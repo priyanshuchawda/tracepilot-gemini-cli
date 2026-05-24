@@ -9,21 +9,23 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-describe('scripts/demo-broken-node-app.ts', () => {
-  it('runs the deterministic local repair flow without leaking secrets', async () => {
+describe('scripts/demo-gemini-repair-agent.ts', () => {
+  it('reports a concise local agent proof without leaking secrets', async () => {
     const { mkdtempSync, readFileSync } =
       await vi.importActual<typeof import('node:fs')>('node:fs');
-    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-demo-'));
+    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-strong-demo-'));
     const workdir = path.join(dir, 'workdir');
     const output = path.join(dir, 'result.json');
 
-    execFileSync(
+    const stdout = execFileSync(
       'node',
       [
         '--import',
         'tsx',
-        'scripts/demo-broken-node-app.ts',
+        'scripts/demo-gemini-repair-agent.ts',
         '--allow-missing-phoenix',
+        '--agent-script',
+        'scripts/testing/fake-checkout-repair-agent.mjs',
         '--workdir',
         workdir,
         '--output',
@@ -41,14 +43,18 @@ describe('scripts/demo-broken-node-app.ts', () => {
         },
         stdio: 'pipe',
       },
-    );
+    ).toString('utf8');
 
     const report = JSON.parse(readFileSync(output, 'utf8'));
+    expect(stdout).toContain('AGENT_REPAIR: PASS');
+    expect(stdout).toContain('PHOENIX_MCP_INTROSPECTION: DEGRADED');
+    expect(stdout).toContain('FILES_CHANGED: PASS count=3');
+    expect(stdout).toContain('RETRY_TEST: PASS');
+    expect(stdout).toContain(`REPORT: ${output}`);
     expect(report.ok).toBe(true);
-    expect(report.localRepairOk).toBe(true);
-    expect(report.phoenix.visible).toBe(false);
-    expect(report.eval.ok).toBe(false);
+    expect(report.agent.mode).toBe('substitute');
+    expect(report.repair.changedFiles).toHaveLength(3);
     expect(report.eval.results).toHaveLength(7);
-    expect(JSON.stringify(report)).not.toContain('sk-proj-demoSecret');
+    expect(JSON.stringify(report)).not.toContain('videoSecretToken');
   }, 60000);
 });
