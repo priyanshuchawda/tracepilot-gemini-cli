@@ -47,8 +47,8 @@ Offline demo evidence must not claim:
 ## Video-Ready Gemini Demo Command
 
 This local command does not require Cloud Run or CI/CD. Build the CLI once, then
-run Gemini 3 (`gemini-3.5-flash`) against the three-failure checkout-service
-fixture:
+run Gemini 3 (`gemini-3.1-flash-lite-preview`) against the three-failure
+checkout-service fixture:
 
 ```powershell
 npm run build
@@ -66,6 +66,30 @@ Required proof lines:
 
 Show the printed session ID in Phoenix to demonstrate that Gemini's failed test
 run and the Phoenix MCP self-introspection spans belong to the recorded repair.
+
+## Video-Ready Self-Improvement Command
+
+Use this after the single-run command passes. It executes a seed repair and a
+replay repair locally; the replay passes only when its
+`gemini_cli.chain.repair_memory_retrieve` telemetry references the seed
+session's verified repair-report span through Phoenix MCP:
+
+```powershell
+npm run demo:phoenix-repair-memory -- --env-file C:\path\to\tracepilot-gemini-cli\.env
+```
+
+Required proof lines:
+
+- `SEED_REPAIR: PASS mode=gemini`
+- `VERIFIED_REPAIR_RECORDED: PASS`
+- `SEED_OUTCOME_VISIBLE: PASS`
+- `REPLAY_REPAIR: PASS mode=gemini`
+- `PHOENIX_MEMORY_MATCH: PASS`
+- `REPLAY_RETRY_TEST: PASS`
+- `EVALS: PASS`
+
+Do not use `demo:phoenix-repair-memory:controlled` as submission evidence; it is
+a deterministic script-contract test and labels its proof as `SIMULATED`.
 
 ## Deterministic Strict Demo Command
 

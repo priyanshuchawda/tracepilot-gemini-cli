@@ -12,6 +12,7 @@ const phoenixMcpLaunchers = [
   'scripts/phoenix-mcp-smoke.mjs',
   'scripts/demo-broken-node-app.ts',
   'scripts/demo-gemini-repair-agent.ts',
+  'scripts/demo-phoenix-repair-memory-replay.ts',
 ];
 const defaultPackageSpec = '@arizeai/phoenix-mcp@4.0.13';
 const floatingPackageSpec = ['@arizeai/phoenix-mcp', 'latest'].join('@');

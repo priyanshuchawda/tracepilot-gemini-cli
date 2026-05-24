@@ -10,6 +10,7 @@ import {
   CoreToolCallStatus,
   type ErroredToolCall,
 } from '../scheduler/types.js';
+import type { TracePilotFailureSignature } from '../tracepilot/failureSignature.js';
 import { ToolErrorType } from '../tools/tool-error.js';
 import { SHELL_TOOL_NAME } from '../tools/tool-names.js';
 import {
@@ -24,6 +25,7 @@ import {
 import {
   buildTraceRepairEvidenceText,
   queryPhoenixForFailedToolCall,
+  queryPhoenixForHistoricalRepairs,
 } from './phoenixSelfIntrospection.js';
 
 const flushTelemetry = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -302,6 +304,69 @@ describe('phoenix self introspection', () => {
         'Phoenix MCP did not return matching failed span evidence',
       ),
     });
+  });
+
+  it('queries only verified repair reports for historical memory', async () => {
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: GeminiCliOperation.RepairReport,
+            attributes: {
+              'gemini_cli.repair.root_cause': 'test_assertion_failure',
+              'gemini_cli.repair.verification_passed': true,
+              'session.id': 'seed-session',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+    const config = {
+      getSessionId: () => 'replay-session',
+      getTelemetryLogPromptsEnabled: () => true,
+      getTelemetryTracesEnabled: () => true,
+      getMcpClientManager: () => ({
+        getMcpServers: () => ({ phoenix: {} }),
+        getClient: () => ({
+          getStatus: () => 'connected',
+        }),
+      }),
+      getToolRegistry: () => ({
+        getToolsByServer: () => [
+          {
+            name: 'mcp_phoenix_get_spans',
+            serverToolName: 'get-spans',
+            buildAndExecute,
+          },
+        ],
+      }),
+    } as unknown as Config;
+    const signature = {
+      id: 'tracepilot-failure-replay',
+      taxonomy: 'test_assertion_failure',
+      commandFamily: 'npm test',
+      diagnostics: [],
+      stackFrames: [],
+      files: [],
+      dependencies: {},
+      canonical: {},
+    } as TracePilotFailureSignature;
+
+    const result = await queryPhoenixForHistoricalRepairs(config, signature);
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: [{ sessionId: 'seed-session', verificationPassed: true }],
+    });
+    expect(buildAndExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        names: [GeminiCliOperation.RepairReport],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(buildAndExecute.mock.calls[0]?.[0]).not.toHaveProperty('query');
   });
 
   it('queries Phoenix MCP directly from env when no configured MCP client exists', async () => {
