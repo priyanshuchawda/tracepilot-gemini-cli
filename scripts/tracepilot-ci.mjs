@@ -14,6 +14,10 @@ import path from 'node:path';
 const logDir = path.resolve('.ai-logs', 'tracepilot-ci');
 const summaryPath = path.join(logDir, 'summary.json');
 const verbose = process.env.TRACEPILOT_CI_VERBOSE === 'true';
+const PROOF_LEVELS = Object.freeze({
+  LOCAL_OFFLINE: 'local_offline',
+  LIVE_PHOENIX: 'live_phoenix',
+});
 const secretValues = [
   process.env.GEMINI_API_KEY,
   process.env.PHOENIX_API_KEY,
@@ -73,10 +77,15 @@ const summary = {
   ok: results.every(
     (result) => result.status === 'passed' || result.status === 'skipped',
   ),
+  proofLevel: deriveProofLevel(results),
+  strictLiveProof: deriveProofLevel(results) === PROOF_LEVELS.LIVE_PHOENIX,
   generatedAt: new Date().toISOString(),
   results,
 };
 await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+console.log(
+  `PROOF_LEVEL: ${summary.proofLevel} strictLiveProof=${summary.strictLiveProof}`,
+);
 console.log(`TracePilot CI summary: ${summaryPath}`);
 
 if (!summary.ok) {
@@ -85,6 +94,15 @@ if (!summary.ok) {
 
 function command(name, executable, args) {
   return { name, executable, args };
+}
+
+function deriveProofLevel(results) {
+  const phoenixMcp = results.find(
+    (result) => result.name === 'phoenix-mcp-smoke',
+  );
+  return phoenixMcp?.status === 'passed'
+    ? PROOF_LEVELS.LIVE_PHOENIX
+    : PROOF_LEVELS.LOCAL_OFFLINE;
 }
 
 async function runCommand(item) {

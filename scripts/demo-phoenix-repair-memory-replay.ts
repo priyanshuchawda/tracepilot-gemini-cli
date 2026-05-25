@@ -18,6 +18,12 @@ import {
   getSpanList,
   resolveDirectPhoenixMcpConfig,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
+import {
+  describeTracePilotProofLevel,
+  isStrictTracePilotProofLevel,
+  TRACEPILOT_PROOF_LEVELS,
+  type TracePilotProofLevel,
+} from '../packages/core/src/tracepilot/proofLevel.js';
 
 const execFileAsync = promisify(execFile);
 const PHOENIX_MCP_QUERY_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
@@ -32,6 +38,7 @@ interface Options {
 
 interface RepairSessionReport {
   ok: boolean;
+  proofLevel?: TracePilotProofLevel;
   sessionId: string;
   agent: { mode: string; exitCode: number };
   repair: {
@@ -111,9 +118,12 @@ async function main(argv: string[]): Promise<number> {
     replay.retryTest.exitCode === 0 &&
     replay.eval.ok &&
     memory.matched;
+  const proofLevel = deriveProofLevel(options, runOk, memory);
   const report = {
     ok: runOk,
     strictLiveProof: runOk && !memory.simulated,
+    proofLevel,
+    proofSummary: describeTracePilotProofLevel(proofLevel),
     seed,
     seedOutcome,
     replay,
@@ -128,6 +138,19 @@ async function main(argv: string[]): Promise<number> {
   );
   printProofLines(report, options.output);
   return report.ok ? 0 : 1;
+}
+
+function deriveProofLevel(
+  options: Options,
+  runOk: boolean,
+  memory: MemoryMatch,
+): TracePilotProofLevel {
+  if (options.controlledRunnerScript) {
+    return TRACEPILOT_PROOF_LEVELS.CONTROLLED_SUBSTITUTE;
+  }
+  return runOk && !memory.simulated
+    ? TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX
+    : TRACEPILOT_PROOF_LEVELS.DEGRADED_GEMINI;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -374,6 +397,7 @@ function printProofLines(
   report: {
     ok: boolean;
     strictLiveProof: boolean;
+    proofLevel: TracePilotProofLevel;
     seed: RepairSessionReport;
     seedOutcome: SeedOutcomeVisibility;
     replay: RepairSessionReport;
@@ -382,6 +406,9 @@ function printProofLines(
   output: string,
 ): void {
   const qualifier = report.memory.simulated ? 'SIMULATED' : 'PASS';
+  console.log(
+    `PROOF_LEVEL: ${report.proofLevel} strictLiveProof=${isStrictTracePilotProofLevel(report.proofLevel)}`,
+  );
   console.log(
     `SEED_REPAIR: ${report.seed.ok ? 'PASS' : 'FAIL'} mode=${report.seed.agent.mode}`,
   );

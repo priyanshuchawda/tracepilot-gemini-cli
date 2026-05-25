@@ -59,6 +59,7 @@ describe('scripts/tracepilot-ci.mjs', () => {
     expect(result.status, output).toBe(0);
     expect(output).toContain('RUN lint');
     expect(output).toContain('PASS lint');
+    expect(output).toContain('PROOF_LEVEL: local_offline');
     expect(output).not.toContain('CHILD_STDOUT');
     expect(output).not.toContain('CHILD_STDERR');
 
@@ -68,5 +69,15 @@ describe('scripts/tracepilot-ci.mjs', () => {
     );
     expect(lintLog).toContain('CHILD_STDOUT_run_lint');
     expect(lintLog).toContain('CHILD_STDERR_run_lint');
+    const summary = JSON.parse(
+      readFileSync(
+        path.join(dir, '.ai-logs', 'tracepilot-ci', 'summary.json'),
+        'utf8',
+      ),
+    );
+    expect(summary).toMatchObject({
+      proofLevel: 'local_offline',
+      strictLiveProof: false,
+    });
   }, 30000);
 });

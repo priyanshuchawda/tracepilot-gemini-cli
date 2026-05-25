@@ -59,6 +59,27 @@ Interpretation:
   MCP.
 - Only the MCP smoke proves the TracePilot self-introspection dependency.
 
+## Proof Levels
+
+TracePilot reports encode proof strength with a first-class `proofLevel` field
+and console `PROOF_LEVEL` line:
+
+- `local_offline`: deterministic local repair/eval proof only.
+- `controlled_substitute`: fake or controlled runner proof for report shape and
+  local behavior; not autonomous Gemini or live Phoenix proof.
+- `degraded_gemini`: Gemini path ran, but strict Phoenix MCP causal evidence is
+  missing or incomplete.
+- `live_phoenix`: live Phoenix export plus MCP queryability, without autonomous
+  Gemini repair.
+- `live_gemini_phoenix`: autonomous Gemini repair with live Phoenix MCP causal
+  evidence, verified repair outcome, retry pass, and eval pass.
+- `hosted_cloud_run`: deployed Cloud Run endpoint proof.
+
+An `ok: true` report with `local_offline`, `controlled_substitute`, or
+`degraded_gemini` is useful development evidence, but it is not strict live
+proof. Treat only `live_phoenix`, `live_gemini_phoenix`, and `hosted_cloud_run`
+as strict live proof for review.
+
 ## Demo
 
 The deterministic demo fixture lives in `examples/broken-node-app`.

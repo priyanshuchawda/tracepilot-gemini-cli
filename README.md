@@ -31,6 +31,11 @@ Latest verified Phoenix evidence:
   `tracepilot-broken-node-app-1778699160588`.
 - Demo trace evidence: `de13112b1dadd28dda63a83365d92344`.
 
+TracePilot reports now include `proofLevel` and `strictLiveProof`. Treat
+`local_offline`, `controlled_substitute`, and `degraded_gemini` as development
+evidence only; strict review evidence requires `live_phoenix`,
+`live_gemini_phoenix`, or `hosted_cloud_run`.
+
 Cloud Run is intentionally not live right now. The repo contains cheap Cloud Run
 deploy and smoke tooling, but a public hosted URL should only be shared after
 redeploying and re-running the hosted smoke test.
