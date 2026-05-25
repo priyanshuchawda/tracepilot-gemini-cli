@@ -33,6 +33,7 @@ import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sani
 import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
 import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
 import {
+  completeTracePilotRepairArtifact,
   createTracePilotRepairArtifact,
   renderTracePilotRepairMarkdown,
   stableTracePilotRepairArtifactJson,
@@ -128,9 +129,10 @@ async function main(argv: string[]): Promise<number> {
       regressionPassed: regressionConfidence === 1,
     });
     const patches: TracePilotPatchSummary[] = [];
-    const artifact = createTracePilotRepairArtifact({
+    const plannedArtifact = createTracePilotRepairArtifact({
       schemaVersion: 1,
       sessionId,
+      phase: 'planned',
       failure: {
         summary: firstFailure
           ? `Verification failed in ${formatCommand(firstFailure.spec)}`
@@ -183,6 +185,23 @@ async function main(argv: string[]): Promise<number> {
         retriesRequired: 0,
         unsafeCommandsBlocked: 0,
       },
+    });
+    const artifact = completeTracePilotRepairArtifact(plannedArtifact, {
+      filesModified: [],
+      patches,
+      verificationMatrix,
+      retryMetadata: {
+        attempts: 1,
+        retryCommands: specs.map(formatCommand),
+        finalExitCode: verificationMatrix.every(
+          (check) => check.status === 'pass',
+        )
+          ? 0
+          : 1,
+      },
+      repairDurationMs: Date.now() - startedAt,
+      completedAt: new Date().toISOString(),
+      rollbackStrategy: ['No patch applied by tracepilot-check-folder.'],
     });
 
     recordRepairArtifactSpan(sessionId, artifact);

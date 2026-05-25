@@ -173,6 +173,7 @@ export async function buildTraceEvidenceRepairPlan(
       const repairArtifact = createTracePilotRepairArtifact({
         schemaVersion: 1,
         sessionId: config.getSessionId(),
+        phase: 'planned',
         failure: {
           summary: summarizeFailure(
             call.request.name,

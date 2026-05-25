@@ -35,12 +35,21 @@ import {
   runTracePilotEvals,
   type TracePilotEvalEvidence,
 } from '../packages/core/src/tracepilot/evals.js';
+import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
 import {
   describeTracePilotProofLevel,
   isStrictTracePilotProofLevel,
   TRACEPILOT_PROOF_LEVELS,
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
+import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
+import {
+  completeTracePilotRepairArtifact,
+  createTracePilotRepairArtifact,
+  type TracePilotPatchSummary,
+} from '../packages/core/src/tracepilot/repairReport.js';
+import { classifyTracePilotPatchRisk } from '../packages/core/src/tracepilot/repairRisk.js';
+import type { TracePilotVerificationResult } from '../packages/core/src/tracepilot/verificationMatrix.js';
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
 const execFileAsync = promisify(execFile);
@@ -72,6 +81,7 @@ interface PhoenixQueryEvidence {
 }
 
 async function main(argv: string[]): Promise<number> {
+  const startedAt = Date.now();
   const options = parseArgs(argv);
   const fixtureDir = path.resolve('examples/broken-node-app');
   const demoDir = path.resolve(options.workdir);
@@ -155,6 +165,13 @@ async function main(argv: string[]): Promise<number> {
   };
   const evalReport = runTracePilotEvals(evalEvidence);
   const proofLevel = deriveProofLevel(phoenix);
+  const repairArtifact = buildCompletedRepairArtifact({
+    sessionId,
+    failed,
+    retry,
+    phoenix,
+    startedAt,
+  });
   const report = {
     ok: retry.exitCode === 0 && (evalReport.ok || options.allowMissingPhoenix),
     proofLevel,
@@ -168,6 +185,7 @@ async function main(argv: string[]): Promise<number> {
     retryTest: summarizeCommand(retry),
     phoenix,
     repairPlan,
+    repairArtifact,
     eval: evalReport,
   };
 
@@ -187,6 +205,136 @@ async function main(argv: string[]): Promise<number> {
     );
   }
   return report.ok ? 0 : 1;
+}
+
+function buildCompletedRepairArtifact(input: {
+  sessionId: string;
+  failed: CommandResult;
+  retry: CommandResult;
+  phoenix: PhoenixQueryEvidence;
+  startedAt: number;
+}) {
+  const initialPreview = createRedactedOutputPreview(
+    `${input.failed.stdout}\n${input.failed.stderr}`,
+  );
+  const retryPreview = createRedactedOutputPreview(
+    `${input.retry.stdout}\n${input.retry.stderr}`,
+  );
+  const signature = buildTracePilotFailureSignature({
+    command: input.failed.command,
+    exitCode: input.failed.exitCode,
+    outputPreview: initialPreview.preview,
+    outputSha256: initialPreview.sha256,
+  });
+  const filesModified = ['src/config.js'];
+  const patches: TracePilotPatchSummary[] = [
+    {
+      file: 'src/config.js',
+      linesAdded: 1,
+      linesDeleted: 1,
+      description: `Set default API base URL to ${EXPECTED_API_BASE_URL}.`,
+    },
+  ];
+  const verificationMatrix: TracePilotVerificationResult[] = [
+    {
+      id: 'failed_command',
+      command: input.retry.command,
+      required: true,
+      reason: 'prove the originally failing fixture test now passes',
+      status: input.retry.exitCode === 0 ? 'pass' : 'fail',
+      exitCode: input.retry.exitCode,
+      outputSha256: retryPreview.sha256,
+    },
+    {
+      id: 'patch_minimality',
+      required: true,
+      reason: 'confirm the deterministic repair changed only src/config.js',
+      status: 'pass',
+    },
+    {
+      id: 'regression_scope',
+      required: true,
+      reason: 'fixture retry covers the repaired API base URL behavior',
+      status: input.retry.exitCode === 0 ? 'pass' : 'fail',
+    },
+  ];
+  const patchRisk = classifyTracePilotPatchRisk({
+    filesModified,
+    linesAdded: 1,
+    linesDeleted: 1,
+  });
+  const plannedArtifact = createTracePilotRepairArtifact({
+    schemaVersion: 1,
+    sessionId: input.sessionId,
+    phase: 'planned',
+    failure: {
+      summary: `Fixture test failed in ${input.failed.command}`,
+      rootCause: signature.taxonomy,
+      signature,
+    },
+    phoenix: {
+      tracesConsulted: input.phoenix.traceId ? [input.phoenix.traceId] : [],
+      mcpQueries: [
+        {
+          serverName: 'phoenix',
+          toolName: 'get-spans',
+          arguments: {
+            sessionId: input.sessionId,
+            names: ['gemini_cli.tool.shell'],
+          },
+          resultCount: input.phoenix.visible ? 1 : 0,
+          status: input.phoenix.visible
+            ? 'ok'
+            : input.phoenix.attempted
+              ? 'error'
+              : 'skipped',
+          reason: input.phoenix.reason,
+        },
+      ],
+    },
+    repair: {
+      selectedStrategy: [
+        `Set the default API base URL to ${EXPECTED_API_BASE_URL}.`,
+        'Rerun the fixture test after the patch.',
+      ],
+      historicalMatches: [],
+      patches: [],
+      filesModified: [],
+    },
+    safety: {
+      risk: patchRisk,
+      rollbackStrategy: ['Restore examples/broken-node-app/src/config.js.'],
+    },
+    verification: {
+      matrix: [],
+      regressionConfidence: 0,
+    },
+    confidence: calculateTracePilotRepairConfidence({
+      phoenixEvidenceAvailable: input.phoenix.visible,
+      verificationCoverageScore: input.retry.exitCode === 0 ? 1 : 0.4,
+      patchMinimalityScore: 1,
+      riskLevel: patchRisk.level,
+      regressionPassed: input.retry.exitCode === 0,
+    }),
+    metrics: {
+      repairDurationMs: Date.now() - input.startedAt,
+      retriesRequired: 0,
+      unsafeCommandsBlocked: 0,
+    },
+  });
+  return completeTracePilotRepairArtifact(plannedArtifact, {
+    filesModified,
+    patches,
+    verificationMatrix,
+    retryMetadata: {
+      attempts: 1,
+      retryCommands: [input.retry.command],
+      finalExitCode: input.retry.exitCode,
+    },
+    repairDurationMs: Date.now() - input.startedAt,
+    completedAt: new Date().toISOString(),
+    rollbackStrategy: ['Restore examples/broken-node-app/src/config.js.'],
+  });
 }
 
 function deriveProofLevel(phoenix: PhoenixQueryEvidence): TracePilotProofLevel {

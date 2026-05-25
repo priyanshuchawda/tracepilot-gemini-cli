@@ -52,7 +52,15 @@ import {
   TRACEPILOT_PROOF_LEVELS,
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
+import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
 import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepilot/repairMemory.js';
+import {
+  completeTracePilotRepairArtifact,
+  createTracePilotRepairArtifact,
+  type TracePilotPatchSummary,
+} from '../packages/core/src/tracepilot/repairReport.js';
+import { classifyTracePilotPatchRisk } from '../packages/core/src/tracepilot/repairRisk.js';
+import type { TracePilotVerificationResult } from '../packages/core/src/tracepilot/verificationMatrix.js';
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
 const execFileAsync = promisify(execFile);
@@ -129,6 +137,7 @@ interface CausalTraceEvidence {
 }
 
 async function main(argv: string[]): Promise<number> {
+  const startedAt = Date.now();
   const options = parseArgs(argv);
   dotenv.config({ path: options.envFile, quiet: true });
 
@@ -143,7 +152,8 @@ async function main(argv: string[]): Promise<number> {
   const initial = await runNodeTests(demoDir);
   const agent = await runAgent(options, demoDir, sessionId, fixtureDir);
   const retry = await runNodeTests(demoDir);
-  const changedFiles = findChangedFiles(before, await captureFiles(demoDir));
+  const after = await captureFiles(demoDir);
+  const changedFiles = findChangedFiles(before, after);
   const phoenix =
     agent.mode === 'substitute'
       ? degradedPhoenix('Controlled substitute agent does not emit CLI spans.')
@@ -189,6 +199,19 @@ async function main(argv: string[]): Promise<number> {
     verifiedOutcomeRecorded: verifiedOutcome.recorded,
     causalTraceComplete: causalTrace.chainComplete,
   });
+  const repairArtifact = buildCompletedRepairArtifact({
+    sessionId,
+    initial,
+    retry,
+    changedFiles,
+    patches: summarizePatchSummaries(before, after, changedFiles),
+    phoenix,
+    verifiedOutcome,
+    localRepairOk,
+    strictEvidenceOk,
+    evalOk: evalReport.ok,
+    startedAt,
+  });
   const report = {
     ok:
       localRepairOk &&
@@ -221,6 +244,7 @@ async function main(argv: string[]): Promise<number> {
       verifiedOutcomeRecorded: verifiedOutcome.recorded,
       verifiedOutcome,
     },
+    repairArtifact,
     retryTest: summarizeCommand(retry),
     eval: evalReport,
   };
@@ -233,6 +257,169 @@ async function main(argv: string[]): Promise<number> {
   );
   printProofLines(report, options.output);
   return report.ok ? 0 : 1;
+}
+
+function buildCompletedRepairArtifact(input: {
+  sessionId: string;
+  initial: CommandResult;
+  retry: CommandResult;
+  changedFiles: string[];
+  patches: TracePilotPatchSummary[];
+  phoenix: PhoenixSessionEvidence;
+  verifiedOutcome: VerifiedRepairOutcome;
+  localRepairOk: boolean;
+  strictEvidenceOk: boolean;
+  evalOk: boolean;
+  startedAt: number;
+}) {
+  const initialOutput = createRedactedOutputPreview(
+    `${input.initial.stdout}\n${input.initial.stderr}`,
+  );
+  const retryOutput = createRedactedOutputPreview(
+    `${input.retry.stdout}\n${input.retry.stderr}`,
+  );
+  const signature = buildTracePilotFailureSignature({
+    command: input.initial.command,
+    exitCode: input.initial.exitCode,
+    outputPreview: initialOutput.preview,
+    outputSha256: initialOutput.sha256,
+  });
+  const patchRisk = classifyTracePilotPatchRisk({
+    filesModified: input.changedFiles,
+    linesAdded: input.patches.reduce((sum, patch) => sum + patch.linesAdded, 0),
+    linesDeleted: input.patches.reduce(
+      (sum, patch) => sum + patch.linesDeleted,
+      0,
+    ),
+  });
+  const verificationMatrix: TracePilotVerificationResult[] = [
+    {
+      id: 'failed_command',
+      command: input.retry.command,
+      required: true,
+      reason: 'prove the checkout-service fixture tests pass after repair',
+      status: input.retry.exitCode === 0 ? 'pass' : 'fail',
+      exitCode: input.retry.exitCode,
+      outputSha256: retryOutput.sha256,
+    },
+    {
+      id: 'patch_minimality',
+      required: true,
+      reason: 'confirm only the expected source files changed',
+      status: input.localRepairOk ? 'pass' : 'fail',
+    },
+    {
+      id: 'regression_scope',
+      required: true,
+      reason:
+        'confirm retry, eval, and Phoenix evidence cover the repair claim',
+      status:
+        input.retry.exitCode === 0 && input.evalOk && input.strictEvidenceOk
+          ? 'pass'
+          : input.retry.exitCode === 0 && input.evalOk
+            ? 'skipped'
+            : 'fail',
+    },
+  ];
+  const plannedArtifact = createTracePilotRepairArtifact({
+    schemaVersion: 1,
+    sessionId: input.sessionId,
+    phase: 'planned',
+    failure: {
+      summary: `Checkout-service fixture failed in ${input.initial.command}`,
+      rootCause: signature.taxonomy,
+      signature,
+    },
+    phoenix: {
+      tracesConsulted: input.phoenix.traceId ? [input.phoenix.traceId] : [],
+      mcpQueries: [
+        {
+          serverName: 'phoenix',
+          toolName: 'get-spans',
+          arguments: {
+            sessionId: input.sessionId,
+            expectedSpans: [
+              GeminiCliOperation.ToolShell,
+              GeminiCliOperation.ToolPhoenixMcp,
+              GeminiCliOperation.SelfIntrospection,
+            ],
+          },
+          resultCount: input.phoenix.visible ? 1 : 0,
+          status: input.phoenix.visible
+            ? 'ok'
+            : input.phoenix.attempted
+              ? 'error'
+              : 'skipped',
+          reason: input.phoenix.reason,
+        },
+      ],
+    },
+    repair: {
+      selectedStrategy: [
+        'Apply the minimal checkout-service source repair.',
+        'Rerun the fixture tests and deterministic evals.',
+        'Record verified repair outcome only when strict Phoenix evidence passes.',
+      ],
+      historicalMatches: [],
+      patches: [],
+      filesModified: [],
+    },
+    safety: {
+      risk: patchRisk,
+      rollbackStrategy: ['Restore changed checkout-service fixture files.'],
+    },
+    verification: {
+      matrix: [],
+      regressionConfidence: 0,
+    },
+    confidence: calculateTracePilotRepairConfidence({
+      phoenixEvidenceAvailable: input.strictEvidenceOk,
+      verificationCoverageScore: input.evalOk ? 1 : 0.5,
+      patchMinimalityScore: input.localRepairOk ? 1 : 0.5,
+      riskLevel: patchRisk.level,
+      regressionPassed: input.retry.exitCode === 0 && input.evalOk,
+    }),
+    metrics: {
+      repairDurationMs: Date.now() - input.startedAt,
+      retriesRequired: input.verifiedOutcome.attempted ? 1 : 0,
+      unsafeCommandsBlocked: 0,
+    },
+  });
+  return completeTracePilotRepairArtifact(plannedArtifact, {
+    filesModified: input.changedFiles,
+    patches: input.patches,
+    verificationMatrix,
+    retryMetadata: {
+      attempts: 1,
+      retryCommands: [input.retry.command],
+      finalExitCode: input.retry.exitCode,
+    },
+    repairDurationMs: Date.now() - input.startedAt,
+    completedAt: new Date().toISOString(),
+    rollbackStrategy: ['Restore changed checkout-service fixture files.'],
+  });
+}
+
+function summarizePatchSummaries(
+  before: Map<string, string>,
+  after: Map<string, string>,
+  changedFiles: string[],
+): TracePilotPatchSummary[] {
+  return changedFiles.map((file) => {
+    const beforeLines = countLines(before.get(file) ?? '');
+    const afterLines = countLines(after.get(file) ?? '');
+    const modified = before.get(file) !== after.get(file);
+    return {
+      file,
+      linesAdded: Math.max(0, afterLines - beforeLines) || (modified ? 1 : 0),
+      linesDeleted: Math.max(0, beforeLines - afterLines) || (modified ? 1 : 0),
+      description: 'Modified by the TracePilot Gemini repair run.',
+    };
+  });
+}
+
+function countLines(value: string): number {
+  return value.length === 0 ? 0 : value.split(/\r?\n/).length;
 }
 
 function deriveProofLevel(input: {

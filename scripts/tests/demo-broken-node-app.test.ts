@@ -50,6 +50,18 @@ describe('scripts/demo-broken-node-app.ts', () => {
     expect(report.strictLiveProof).toBe(false);
     expect(report.proofSummary).toContain('Local deterministic proof only');
     expect(report.localRepairOk).toBe(true);
+    expect(report.repairArtifact).toMatchObject({
+      phase: 'verified',
+      repair: {
+        filesModified: ['src/config.js'],
+        patches: [{ file: 'src/config.js' }],
+      },
+      completion: {
+        attempts: 1,
+        finalExitCode: 0,
+        verificationPassed: true,
+      },
+    });
     expect(report.phoenix.visible).toBe(false);
     expect(report.eval.ok).toBe(false);
     expect(report.eval.results).toHaveLength(7);

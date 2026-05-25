@@ -101,6 +101,14 @@ describe('TracePilot repair planner', () => {
     expect(plan.verificationMatrix?.map((check) => check.id)).toContain(
       'typecheck',
     );
+    expect(plan.repairArtifact).toMatchObject({
+      phase: 'planned',
+      repair: {
+        filesModified: [],
+        patches: [],
+      },
+    });
+    expect(plan.repairReportMarkdown).toContain('Phase: planned');
     expect(plan.text).toContain('output_sha256=abc123');
     expect(plan.text).toContain('failure_evidence=AssertionError');
   });
