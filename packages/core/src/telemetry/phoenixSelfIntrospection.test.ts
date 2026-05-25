@@ -306,7 +306,138 @@ describe('phoenix self introspection', () => {
       reason: expect.stringContaining(
         'Phoenix MCP did not return matching failed span evidence',
       ),
+      reasonCode: 'no_matching_span',
+      diagnostics: expect.objectContaining({
+        attemptedNames: [GeminiCliOperation.ToolShell],
+        limit: 20,
+        matchingEvidenceCount: 0,
+        projectIdentifier: undefined,
+        sessionId: 'session-1',
+        spanCount: 0,
+        toolName: 'get-spans',
+      }),
     });
+  });
+
+  it('reports query diagnostics when the Phoenix limit may truncate results', async () => {
+    const spans = Array.from({ length: 20 }, (_, index) => ({
+      name: 'gemini_cli.tool.shell',
+      attributes: {
+        [GEN_AI_TOOL_NAME]: index === 19 ? SHELL_TOOL_NAME : 'other_tool',
+        [GEMINI_CLI_COMMAND_EXIT_CODE]: index === 19 ? 1 : 0,
+        [GEMINI_CLI_OUTPUT_SHA256]: `hash-${index}`,
+      },
+    }));
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: { spans },
+      returnDisplay: '',
+    });
+    const config = makePhoenixConfig(buildAndExecute);
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      diagnostics: expect.objectContaining({
+        attemptedNames: [GeminiCliOperation.ToolShell],
+        limit: 20,
+        limitTruncationPossible: true,
+        matchingEvidenceCount: 1,
+        spanCount: 20,
+      }),
+    });
+  });
+
+  it('retries Phoenix MCP errors with configured backoff diagnostics', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('TRACEPILOT_PHOENIX_MCP_RETRIES', '2');
+    vi.stubEnv('TRACEPILOT_PHOENIX_MCP_RETRY_BACKOFF_MS', '25');
+    const buildAndExecute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        error: { message: 'temporary Phoenix MCP outage token=secret123' },
+      })
+      .mockResolvedValueOnce({
+        llmContent: {
+          spans: [
+            {
+              name: 'gemini_cli.tool.shell',
+              attributes: {
+                [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+                [GEMINI_CLI_COMMAND_EXIT_CODE]: 1,
+                [GEMINI_CLI_OUTPUT_SHA256]: 'retry-hash',
+              },
+            },
+          ],
+        },
+        returnDisplay: '',
+      });
+    const config = makePhoenixConfig(buildAndExecute);
+
+    const promise = queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      const result = await promise;
+
+      expect(result).toMatchObject({
+        attempted: true,
+        available: true,
+        evidence: {
+          outputSha256: 'retry-hash',
+        },
+        diagnostics: expect.objectContaining({
+          attempts: 2,
+          maxAttempts: 2,
+          retryBackoffMs: 25,
+        }),
+      });
+      expect(buildAndExecute).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(result)).not.toContain('secret123');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports sanitized final Phoenix MCP error diagnostics after retries', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('TRACEPILOT_PHOENIX_MCP_RETRIES', '2');
+    vi.stubEnv('TRACEPILOT_PHOENIX_MCP_RETRY_BACKOFF_MS', '25');
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      error: { message: 'permanent Phoenix MCP outage token=secret123' },
+    });
+    const config = makePhoenixConfig(buildAndExecute);
+
+    const promise = queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall(),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      const result = await promise;
+
+      expect(result).toMatchObject({
+        attempted: true,
+        available: false,
+        reasonCode: 'mcp_error',
+        diagnostics: expect.objectContaining({
+          attempts: 2,
+          maxAttempts: 2,
+          reasonCode: 'mcp_error',
+          retryBackoffMs: 25,
+        }),
+      });
+      expect(buildAndExecute).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(result)).not.toContain('secret123');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('queries only verified repair reports for historical memory', async () => {
