@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { HookCallEvent, EVENT_HOOK_CALL } from './types.js';
 import { HookType } from '../hooks/types.js';
 import type { Config } from '../config/config.js';
@@ -43,6 +44,12 @@ function createMockConfig(logPromptsEnabled: boolean): Config {
 describe('Telemetry Sanitization', () => {
   describe('redactSensitiveText', () => {
     it('redacts common secret patterns before telemetry export', () => {
+      const slackFixture = [
+        'xoxb',
+        '123456789012',
+        '123456789012',
+        'abcdefghijklmnop',
+      ].join('-');
       const sensitive = [
         'GEMINI_API_KEY=AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMY12',
         'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
@@ -50,6 +57,12 @@ describe('Telemetry Sanitization', () => {
         'Authorization: Bearer abc.def.ghi',
         'password="super-secret"',
         'api_key: plain-secret',
+        'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+        'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+        'GITLAB_TOKEN=glpat-1234567890abcdefghijkl',
+        `SLACK_BOT_TOKEN=${slackFixture}`,
+        'JWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+        'REDIS_URL=redis://default:redis-password@example.com:6379/0',
         'DATABASE_URL=postgres://user:pass@example.com/db',
         [
           '-----BEGIN PRIVATE KEY-----',
@@ -67,6 +80,12 @@ describe('Telemetry Sanitization', () => {
       expect(result.value).not.toContain('abc.def.ghi');
       expect(result.value).not.toContain('super-secret');
       expect(result.value).not.toContain('plain-secret');
+      expect(result.value).not.toContain('AKIAIOSFODNN7EXAMPLE');
+      expect(result.value).not.toContain('wJalrXUtnFEMI');
+      expect(result.value).not.toContain('glpat-1234567890');
+      expect(result.value).not.toContain(slackFixture);
+      expect(result.value).not.toContain('eyJhbGciOiJIUzI1NiI');
+      expect(result.value).not.toContain('redis-password');
       expect(result.value).not.toContain('postgres://user:pass');
       expect(result.value).not.toContain('private-key-material');
       expect(result.value).toContain('[REDACTED]');
@@ -98,13 +117,45 @@ describe('Telemetry Sanitization', () => {
       });
 
       expect(preview.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(preview.sha256).not.toBe(
+        createHash('sha256').update(output).digest('hex'),
+      );
+      expect(preview.fingerprintVersion).toBe('redacted-sha256-v1');
       expect(preview.originalLength).toBe(output.length);
       expect(preview.truncated).toBe(true);
       expect(preview.redacted).toBe(true);
       expect(preview.preview).toContain('[REDACTED]');
       expect(preview.preview).not.toContain('sk-proj-dummy');
       expect(preview.preview).not.toContain('abc.def.ghi');
-      expect(preview.preview.length).toBeLessThanOrEqual(140);
+      expect(preview.preview.length).toBeLessThanOrEqual(
+        120 + '\n...[TRUNCATED OUTPUT]...\n'.length,
+      );
+    });
+
+    it('redacts before truncating so boundary-split secrets cannot leak', () => {
+      const secret = 'sk-proj-' + 'a'.repeat(80);
+      const output = `prefix ${secret} suffix`;
+
+      const preview = createRedactedOutputPreview(output, {
+        headChars: 18,
+        tailChars: 18,
+      });
+
+      expect(preview.redacted).toBe(true);
+      expect(preview.preview).toContain('[REDACTED]');
+      expect(preview.preview).not.toContain('sk-proj-');
+      expect(preview.preview).not.toContain('aaaaaaaaaa');
+    });
+
+    it('uses the redacted full output for stable safe fingerprints', () => {
+      const first = createRedactedOutputPreview(
+        'OPENAI_API_KEY=sk-proj-firstSecret0000000000000000',
+      );
+      const second = createRedactedOutputPreview(
+        'OPENAI_API_KEY=sk-proj-secondSecret000000000000000',
+      );
+
+      expect(first.sha256).toBe(second.sha256);
     });
   });
 

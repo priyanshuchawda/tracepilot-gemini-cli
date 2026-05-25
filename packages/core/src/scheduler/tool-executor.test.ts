@@ -33,6 +33,7 @@ import {
   GEMINI_CLI_FILE_PATH,
   GEMINI_CLI_MCP_SERVER,
   GEMINI_CLI_MCP_TOOL,
+  GEMINI_CLI_OUTPUT_FINGERPRINT_VERSION,
   GEMINI_CLI_OUTPUT_PREVIEW,
   GEMINI_CLI_OUTPUT_REDACTED,
   GEMINI_CLI_OUTPUT_SHA256,
@@ -231,6 +232,7 @@ describe('ToolExecutor', () => {
       attributes: expect.objectContaining({
         [GEMINI_CLI_COMMAND_EXIT_CODE]: 2,
         [GEMINI_CLI_OUTPUT_SHA256]: expect.stringMatching(/^[a-f0-9]{64}$/),
+        [GEMINI_CLI_OUTPUT_FINGERPRINT_VERSION]: 'redacted-sha256-v1',
         [GEMINI_CLI_OUTPUT_REDACTED]: true,
       }),
       output: expect.objectContaining({

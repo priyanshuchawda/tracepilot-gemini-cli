@@ -38,6 +38,8 @@ export const GEMINI_CLI_COMMAND_EXIT_CODE = 'gemini_cli.command.exit_code';
 export const GEMINI_CLI_DURATION_MS = 'gemini_cli.duration_ms';
 export const GEMINI_CLI_OUTPUT_PREVIEW = 'gemini_cli.output.preview';
 export const GEMINI_CLI_OUTPUT_SHA256 = 'gemini_cli.output.sha256';
+export const GEMINI_CLI_OUTPUT_FINGERPRINT_VERSION =
+  'gemini_cli.output.fingerprint_version';
 export const GEMINI_CLI_OUTPUT_ORIGINAL_LENGTH =
   'gemini_cli.output.original_length';
 export const GEMINI_CLI_OUTPUT_TRUNCATED = 'gemini_cli.output.truncated';

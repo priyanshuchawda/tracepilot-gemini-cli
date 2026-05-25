@@ -27,6 +27,8 @@ describe('TracePilot deterministic eval runner', () => {
     expect(serialized).not.toContain('sk-proj-secret');
     expect(serialized).not.toContain('AIzaSecret');
     expect(serialized).not.toContain('ghp_secret');
+    expect(serialized).not.toContain('AKIAIOSFODNN7EXAMPLE');
+    expect(serialized).not.toContain('redis-password');
     expect(serialized).toContain('[REDACTED]');
   });
 
@@ -113,6 +115,12 @@ function makePassingEvidence(): TracePilotEvalEvidence {
         {
           input: 'Authorization: Bearer ghp_secret0000000000000000',
           output: 'Authorization: [REDACTED]',
+        },
+        {
+          input:
+            'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE REDIS_URL=redis://default:redis-password@example.com:6379/0',
+          output:
+            'AWS_ACCESS_KEY_ID=[REDACTED] REDIS_URL=redis://[REDACTED]@example.com:6379/0',
         },
       ],
     },

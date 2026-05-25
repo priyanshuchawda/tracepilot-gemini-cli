@@ -50,6 +50,7 @@ import {
   GEMINI_CLI_FILE_PATH,
   GEMINI_CLI_MCP_SERVER,
   GEMINI_CLI_MCP_TOOL,
+  GEMINI_CLI_OUTPUT_FINGERPRINT_VERSION,
   GEMINI_CLI_OUTPUT_ORIGINAL_LENGTH,
   GEMINI_CLI_OUTPUT_PREVIEW,
   GEMINI_CLI_OUTPUT_REDACTED,
@@ -317,6 +318,8 @@ export class ToolExecutor {
           outputPreview.preview;
         spanMetadata.attributes[GEMINI_CLI_OUTPUT_SHA256] =
           outputPreview.sha256;
+        spanMetadata.attributes[GEMINI_CLI_OUTPUT_FINGERPRINT_VERSION] =
+          outputPreview.fingerprintVersion;
         spanMetadata.attributes[GEMINI_CLI_OUTPUT_ORIGINAL_LENGTH] =
           outputPreview.originalLength;
         spanMetadata.attributes[GEMINI_CLI_OUTPUT_TRUNCATED] =
@@ -352,6 +355,7 @@ export class ToolExecutor {
           errorMessage: completedToolCall.response.error?.message,
           outputPreview: outputPreview.preview,
           outputSha256: outputPreview.sha256,
+          outputFingerprintVersion: outputPreview.fingerprintVersion,
           outputTruncated: outputPreview.truncated,
           outputRedacted: outputPreview.redacted,
         };
