@@ -46,6 +46,12 @@ import {
   type TracePilotEvalEvidence,
 } from '../packages/core/src/tracepilot/evals.js';
 import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
+import {
+  describeTracePilotProofLevel,
+  isStrictTracePilotProofLevel,
+  TRACEPILOT_PROOF_LEVELS,
+  type TracePilotProofLevel,
+} from '../packages/core/src/tracepilot/proofLevel.js';
 import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepilot/repairMemory.js';
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
@@ -176,6 +182,13 @@ async function main(argv: string[]): Promise<number> {
     retryPassed: retry.exitCode === 0,
     expectedFilesChanged: filesChangedOk,
   });
+  const proofLevel = deriveProofLevel({
+    mode: agent.mode,
+    strictEvidenceOk,
+    evalOk: evalReport.ok,
+    verifiedOutcomeRecorded: verifiedOutcome.recorded,
+    causalTraceComplete: causalTrace.chainComplete,
+  });
   const report = {
     ok:
       localRepairOk &&
@@ -184,6 +197,9 @@ async function main(argv: string[]): Promise<number> {
           evalReport.ok &&
           verifiedOutcome.recorded &&
           causalTrace.chainComplete)),
+    proofLevel,
+    strictLiveProof: isStrictTracePilotProofLevel(proofLevel),
+    proofSummary: describeTracePilotProofLevel(proofLevel),
     sessionId,
     workdir: demoDir,
     allowMissingPhoenix: options.allowMissingPhoenix,
@@ -217,6 +233,24 @@ async function main(argv: string[]): Promise<number> {
   );
   printProofLines(report, options.output);
   return report.ok ? 0 : 1;
+}
+
+function deriveProofLevel(input: {
+  mode: AgentResult['mode'];
+  strictEvidenceOk: boolean;
+  evalOk: boolean;
+  verifiedOutcomeRecorded: boolean;
+  causalTraceComplete: boolean;
+}): TracePilotProofLevel {
+  if (input.mode === 'substitute') {
+    return TRACEPILOT_PROOF_LEVELS.CONTROLLED_SUBSTITUTE;
+  }
+  return input.strictEvidenceOk &&
+    input.evalOk &&
+    input.verifiedOutcomeRecorded &&
+    input.causalTraceComplete
+    ? TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX
+    : TRACEPILOT_PROOF_LEVELS.DEGRADED_GEMINI;
 }
 
 async function recordVerifiedRepairOutcome(input: {
@@ -820,9 +854,14 @@ function printProofLines(
     };
     retryTest: { exitCode: number };
     eval: { ok: boolean };
+    proofLevel: TracePilotProofLevel;
+    strictLiveProof: boolean;
   },
   output: string,
 ): void {
+  console.log(
+    `PROOF_LEVEL: ${report.proofLevel} strictLiveProof=${report.strictLiveProof}`,
+  );
   console.log(
     `INITIAL_FIXTURE_TEST: ${report.initialTest.exitCode !== 0 ? 'FAIL (expected)' : 'FAIL'}`,
   );

@@ -42,6 +42,9 @@ describe('scripts/demo-phoenix-repair-memory-replay.ts', () => {
     ).toString('utf8');
 
     const report = JSON.parse(readFileSync(output, 'utf8'));
+    expect(stdout).toContain(
+      'PROOF_LEVEL: controlled_substitute strictLiveProof=false',
+    );
     expect(stdout).toContain('SEED_REPAIR: PASS mode=controlled');
     expect(stdout).toContain('VERIFIED_REPAIR_RECORDED: SIMULATED');
     expect(stdout).toContain('SEED_OUTCOME_VISIBLE: SIMULATED');
@@ -49,7 +52,11 @@ describe('scripts/demo-phoenix-repair-memory-replay.ts', () => {
     expect(stdout).toContain('PHOENIX_MEMORY_MATCH: SIMULATED');
     expect(stdout).toContain('REPLAY_RETRY_TEST: PASS');
     expect(report.ok).toBe(true);
+    expect(report.proofLevel).toBe('controlled_substitute');
     expect(report.strictLiveProof).toBe(false);
+    expect(report.proofSummary).toContain(
+      'not autonomous Gemini or live Phoenix proof',
+    );
     expect(report.seedOutcome.visible).toBe(true);
     expect(report.memory.seedSessionIds).toContain(report.seed.sessionId);
     expect(JSON.stringify(report)).not.toContain('videoSecretToken');

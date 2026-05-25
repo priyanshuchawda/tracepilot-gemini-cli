@@ -46,6 +46,9 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     ).toString('utf8');
 
     const report = JSON.parse(readFileSync(output, 'utf8'));
+    expect(stdout).toContain(
+      'PROOF_LEVEL: controlled_substitute strictLiveProof=false',
+    );
     expect(stdout).toContain('AGENT_REPAIR: PASS');
     expect(stdout).toContain('PHOENIX_MCP_INTROSPECTION: DEGRADED');
     expect(stdout).toContain('CAUSAL_TRACE: DEGRADED');
@@ -55,6 +58,11 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     expect(stdout).toContain('RETRY_TEST: PASS');
     expect(stdout).toContain(`REPORT: ${output}`);
     expect(report.ok).toBe(true);
+    expect(report.proofLevel).toBe('controlled_substitute');
+    expect(report.strictLiveProof).toBe(false);
+    expect(report.proofSummary).toContain(
+      'not autonomous Gemini or live Phoenix proof',
+    );
     expect(report.agent.mode).toBe('substitute');
     expect(report.repair.changedFiles).toHaveLength(3);
     expect(report.repair.verifiedOutcomeRecorded).toBe(false);
@@ -107,7 +115,9 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     ).toString('utf8');
 
     const report = JSON.parse(readFileSync(output, 'utf8'));
+    expect(stdout).toContain('PROOF_LEVEL: controlled_substitute');
     expect(stdout).toContain('MODEL_USED: repair-model attempts=2');
+    expect(report.proofLevel).toBe('controlled_substitute');
     expect(stdout).toContain('MODEL_FALLBACK: PASS reason=quota');
     expect(report.ok).toBe(true);
     expect(report.agent.model).toBe('repair-model');

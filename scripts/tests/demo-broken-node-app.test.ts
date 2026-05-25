@@ -17,7 +17,7 @@ describe('scripts/demo-broken-node-app.ts', () => {
     const workdir = path.join(dir, 'workdir');
     const output = path.join(dir, 'result.json');
 
-    execFileSync(
+    const stdout = execFileSync(
       'node',
       [
         '--import',
@@ -41,10 +41,14 @@ describe('scripts/demo-broken-node-app.ts', () => {
         },
         stdio: 'pipe',
       },
-    );
+    ).toString('utf8');
 
     const report = JSON.parse(readFileSync(output, 'utf8'));
     expect(report.ok).toBe(true);
+    expect(stdout).toContain('PROOF_LEVEL: local_offline');
+    expect(report.proofLevel).toBe('local_offline');
+    expect(report.strictLiveProof).toBe(false);
+    expect(report.proofSummary).toContain('Local deterministic proof only');
     expect(report.localRepairOk).toBe(true);
     expect(report.phoenix.visible).toBe(false);
     expect(report.eval.ok).toBe(false);

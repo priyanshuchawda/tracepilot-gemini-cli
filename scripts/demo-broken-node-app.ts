@@ -35,6 +35,12 @@ import {
   runTracePilotEvals,
   type TracePilotEvalEvidence,
 } from '../packages/core/src/tracepilot/evals.js';
+import {
+  describeTracePilotProofLevel,
+  isStrictTracePilotProofLevel,
+  TRACEPILOT_PROOF_LEVELS,
+  type TracePilotProofLevel,
+} from '../packages/core/src/tracepilot/proofLevel.js';
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
 const execFileAsync = promisify(execFile);
@@ -148,8 +154,12 @@ async function main(argv: string[]): Promise<number> {
     },
   };
   const evalReport = runTracePilotEvals(evalEvidence);
+  const proofLevel = deriveProofLevel(phoenix);
   const report = {
     ok: retry.exitCode === 0 && (evalReport.ok || options.allowMissingPhoenix),
+    proofLevel,
+    strictLiveProof: isStrictTracePilotProofLevel(proofLevel),
+    proofSummary: describeTracePilotProofLevel(proofLevel),
     localRepairOk: failed.exitCode !== 0 && retry.exitCode === 0,
     allowMissingPhoenix: options.allowMissingPhoenix,
     workdir: demoDir,
@@ -167,6 +177,9 @@ async function main(argv: string[]): Promise<number> {
     `${JSON.stringify(report, null, 2)}\n`,
     'utf8',
   );
+  console.log(
+    `PROOF_LEVEL: ${report.proofLevel} strictLiveProof=${report.strictLiveProof}`,
+  );
   console.log(`TracePilot broken-node-app demo report: ${options.output}`);
   if (!report.ok && !options.allowMissingPhoenix) {
     console.error(
@@ -174,6 +187,12 @@ async function main(argv: string[]): Promise<number> {
     );
   }
   return report.ok ? 0 : 1;
+}
+
+function deriveProofLevel(phoenix: PhoenixQueryEvidence): TracePilotProofLevel {
+  return phoenix.visible && phoenix.queryable
+    ? TRACEPILOT_PROOF_LEVELS.LIVE_PHOENIX
+    : TRACEPILOT_PROOF_LEVELS.LOCAL_OFFLINE;
 }
 
 function parseArgs(argv: string[]): CliOptions {
