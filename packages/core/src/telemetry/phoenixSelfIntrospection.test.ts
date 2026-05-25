@@ -19,6 +19,9 @@ import {
   GEMINI_CLI_MCP_TOOL,
   GEMINI_CLI_OUTPUT_PREVIEW,
   GEMINI_CLI_OUTPUT_SHA256,
+  GEMINI_CLI_REPAIR_ROOT_CAUSE,
+  GEMINI_CLI_REPAIR_SIGNATURE_ID,
+  GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
   GeminiCliOperation,
   GEN_AI_TOOL_NAME,
 } from './constants.js';
@@ -313,8 +316,9 @@ describe('phoenix self introspection', () => {
           {
             name: GeminiCliOperation.RepairReport,
             attributes: {
-              'gemini_cli.repair.root_cause': 'test_assertion_failure',
-              'gemini_cli.repair.verification_passed': true,
+              [GEMINI_CLI_REPAIR_SIGNATURE_ID]: 'tracepilot-failure-replay',
+              [GEMINI_CLI_REPAIR_ROOT_CAUSE]: 'test_assertion_failure',
+              [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
               'session.id': 'seed-session',
             },
           },
@@ -367,6 +371,91 @@ describe('phoenix self introspection', () => {
       expect.any(AbortSignal),
     );
     expect(buildAndExecute.mock.calls[0]?.[0]).not.toHaveProperty('query');
+  });
+
+  it('ignores unrelated verified historical repairs without matching evidence', async () => {
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: GeminiCliOperation.RepairReport,
+            attributes: {
+              [GEMINI_CLI_REPAIR_ROOT_CAUSE]: 'build_failure',
+              [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
+              'session.id': 'unrelated-build-session',
+            },
+          },
+          {
+            name: GeminiCliOperation.RepairReport,
+            attributes: {
+              [GEMINI_CLI_REPAIR_ROOT_CAUSE]: 'test_assertion_failure',
+              [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
+              'session.id': 'broad-test-session',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+    const config = makePhoenixConfig(buildAndExecute);
+    const signature = {
+      id: 'tracepilot-failure-current',
+      taxonomy: 'test_assertion_failure',
+      commandFamily: 'test',
+      diagnostics: ['assertionerror: expected api base url'],
+      stackFrames: [],
+      files: ['src/config.js'],
+      dependencies: {},
+      canonical: {},
+    } as TracePilotFailureSignature;
+
+    const result = await queryPhoenixForHistoricalRepairs(config, signature);
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: false,
+      evidence: [],
+      reason: expect.stringContaining('returned no historical repair spans'),
+    });
+  });
+
+  it('accepts legacy historical repairs when root cause has secondary diagnostic overlap', async () => {
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: GeminiCliOperation.RepairReport,
+            attributes: {
+              [GEMINI_CLI_REPAIR_ROOT_CAUSE]: 'test_assertion_failure',
+              [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
+              [GEMINI_CLI_OUTPUT_PREVIEW]:
+                'AssertionError: expected API base URL in src/config.js',
+              'session.id': 'legacy-overlap-session',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+    const config = makePhoenixConfig(buildAndExecute);
+    const signature = {
+      id: 'tracepilot-failure-current',
+      taxonomy: 'test_assertion_failure',
+      commandFamily: 'test',
+      diagnostics: ['AssertionError: expected API base URL'],
+      stackFrames: [],
+      files: ['src/config.js'],
+      dependencies: {},
+      canonical: {},
+    } as TracePilotFailureSignature;
+
+    const result = await queryPhoenixForHistoricalRepairs(config, signature);
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: [{ sessionId: 'legacy-overlap-session' }],
+    });
   });
 
   it('queries Phoenix MCP directly from env when no configured MCP client exists', async () => {
@@ -536,4 +625,27 @@ function makeFailedShellCall(): ErroredToolCall {
       errorType: ToolErrorType.SHELL_EXECUTE_ERROR,
     },
   };
+}
+
+function makePhoenixConfig(buildAndExecute: ReturnType<typeof vi.fn>): Config {
+  return {
+    getSessionId: () => 'replay-session',
+    getTelemetryLogPromptsEnabled: () => true,
+    getTelemetryTracesEnabled: () => true,
+    getMcpClientManager: () => ({
+      getMcpServers: () => ({ phoenix: {} }),
+      getClient: () => ({
+        getStatus: () => 'connected',
+      }),
+    }),
+    getToolRegistry: () => ({
+      getToolsByServer: () => [
+        {
+          name: 'mcp_phoenix_get_spans',
+          serverToolName: 'get-spans',
+          buildAndExecute,
+        },
+      ],
+    }),
+  } as unknown as Config;
 }
