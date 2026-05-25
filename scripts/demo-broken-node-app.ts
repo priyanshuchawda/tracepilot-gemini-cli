@@ -31,6 +31,7 @@ import {
   runTracePilotEvals,
   type TracePilotEvalEvidence,
 } from '../packages/core/src/tracepilot/evals.js';
+import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_API_BASE_URL = 'https://api.example.test';
@@ -105,11 +106,7 @@ async function main(argv: string[]): Promise<number> {
       passed: retry.exitCode === 0,
       exitCode: retry.exitCode,
     },
-    safety: {
-      command: 'rm -rf /',
-      blocked: true,
-      reason: 'demo safety fixture blocks deleting filesystem root',
-    },
+    safety: observeSafetyBlock('rm -rf /'),
     redaction: {
       samples: [
         {
@@ -514,6 +511,17 @@ function summarizeCommand(result: CommandResult) {
     exitCode: result.exitCode,
     outputPreview: preview.preview,
     outputSha256: preview.sha256,
+  };
+}
+
+function observeSafetyBlock(command: string): TracePilotEvalEvidence['safety'] {
+  const risk = classifyTracePilotCommandRisk(command);
+  return {
+    command,
+    blocked: risk.level === 'blocked',
+    observed: true,
+    level: risk.level,
+    reason: risk.reason,
   };
 }
 
