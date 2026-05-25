@@ -4,8 +4,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Config } from '../config/config.js';
 import type { ErroredToolCall } from '../scheduler/types.js';
 import { MCPServerStatus, type McpClient } from '../tools/mcp-client.js';
@@ -35,12 +33,23 @@ import type { TracePilotFailureSignature } from '../tracepilot/failureSignature.
 import { redactSensitiveText } from './sanitize.js';
 import { flushTelemetry } from './sdk.js';
 import { runInDevTraceSpan } from './trace.js';
+import {
+  callDirectPhoenixMcpGetSpans,
+  collectSpanLikeObjects,
+  DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
+  DIRECT_PHOENIX_MCP_SERVER_NAME,
+  getBoolean,
+  getNumber,
+  getRecord,
+  getString,
+  getStringList,
+  PHOENIX_MCP_TOOL_NAME,
+  resolveDirectPhoenixMcpConfig,
+  type PhoenixMcpToolResult,
+  withPhoenixMcpTimeout,
+} from './phoenixMcpUtils.js';
 
-const PHOENIX_MCP_TOOL_NAME = 'get-spans';
-const DEFAULT_TIMEOUT_MS = 180000;
-const DIRECT_PHOENIX_MCP_SERVER_NAME = 'tracepilot-phoenix-env';
-const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
-const PHOENIX_MCP_PACKAGE_ENV = 'TRACEPILOT_PHOENIX_MCP_PACKAGE';
+const DEFAULT_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
 const PHOENIX_MCP_RETRIES_ENV = 'TRACEPILOT_PHOENIX_MCP_RETRIES';
 const PHOENIX_MCP_RETRY_BACKOFF_MS_ENV =
   'TRACEPILOT_PHOENIX_MCP_RETRY_BACKOFF_MS';
@@ -67,13 +76,6 @@ export interface PhoenixQueryDiagnostics {
   maxAttempts: number;
   retryBackoffMs: number;
   limitTruncationPossible: boolean;
-}
-
-interface PhoenixMcpToolResult {
-  llmContent?: unknown;
-  returnDisplay?: unknown;
-  data?: unknown;
-  error?: { message: string };
 }
 
 export interface PhoenixTraceEvidence {
@@ -225,7 +227,7 @@ export async function queryPhoenixForFailedToolCall(
 
             const { result, attempts } = await executePhoenixQueryWithRetry(
               () =>
-                withTimeout(
+                withPhoenixMcpTimeout(
                   phoenixQuery.execute(controller.signal),
                   timeoutMs,
                   () => controller.abort(),
@@ -417,7 +419,7 @@ export async function queryPhoenixForHistoricalRepairs(
 
             const { result, attempts } = await executePhoenixQueryWithRetry(
               () =>
-                withTimeout(
+                withPhoenixMcpTimeout(
                   phoenixQuery.execute(controller.signal),
                   timeoutMs,
                   () => controller.abort(),
@@ -563,75 +565,12 @@ function getPhoenixMcpQuery(
 
   return {
     serverName: DIRECT_PHOENIX_MCP_SERVER_NAME,
-    execute: () => callDirectPhoenixMcpGetSpans(args, directConfig, timeoutMs),
+    execute: () =>
+      callDirectPhoenixMcpGetSpans(args, directConfig, {
+        clientName: 'tracepilot-phoenix-self-introspection',
+        timeoutMs,
+      }),
   };
-}
-
-interface DirectPhoenixMcpConfig {
-  host: string;
-  project: string;
-  apiKey: string;
-}
-
-function resolveDirectPhoenixMcpConfig(
-  env: NodeJS.ProcessEnv,
-): DirectPhoenixMcpConfig | undefined {
-  const apiKey = env['PHOENIX_API_KEY']?.trim();
-  const project = env['PHOENIX_PROJECT']?.trim();
-  const host = resolvePhoenixMcpHost(env);
-  if (!apiKey || !project || !host) {
-    return undefined;
-  }
-  return { apiKey, project, host };
-}
-
-async function callDirectPhoenixMcpGetSpans(
-  args: Record<string, unknown>,
-  directConfig: DirectPhoenixMcpConfig,
-  timeoutMs: number,
-): Promise<PhoenixMcpToolResult> {
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage(process.env)],
-    env: {
-      ...process.env,
-      PHOENIX_API_KEY: directConfig.apiKey,
-      PHOENIX_HOST: directConfig.host,
-      PHOENIX_PROJECT: directConfig.project,
-    },
-  });
-  const client = new Client({
-    name: 'tracepilot-phoenix-self-introspection',
-    version: '0.0.0',
-  });
-
-  try {
-    await client.connect(transport);
-    const result = await client.callTool(
-      {
-        name: PHOENIX_MCP_TOOL_NAME,
-        arguments: args,
-      },
-      undefined,
-      { timeout: timeoutMs },
-    );
-    const text = getTextContent(result);
-    if (result.isError) {
-      return {
-        error: {
-          message: text || 'Phoenix MCP get-spans returned an error.',
-        },
-      };
-    }
-    const parsed = parseJsonText(text);
-    return {
-      llmContent: parsed ?? text,
-      returnDisplay: '',
-      data: parsed,
-    };
-  } finally {
-    await client.close().catch(() => undefined);
-  }
 }
 
 export function buildTraceRepairEvidenceText(
@@ -736,94 +675,6 @@ function buildPhoenixHistoricalRepairArgs(
   // Query only verified outcome spans, then score relevance client-side. Text
   // filters can hide a reusable repair when output hashes differ between runs.
   return args;
-}
-
-function resolvePhoenixMcpHost(env: NodeJS.ProcessEnv): string | undefined {
-  return [
-    env['PHOENIX_HOST'],
-    env['PHOENIX_BASE_URL'],
-    env['PHOENIX_COLLECTOR_ENDPOINT'],
-  ]
-    .map(normalizePhoenixUrl)
-    .find((value): value is string => value !== undefined);
-}
-
-function normalizePhoenixUrl(value: string | undefined): string | undefined {
-  const trimmed = String(value ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(trimmed);
-    url.search = '';
-    url.hash = '';
-    url.pathname = url.pathname
-      .replace(/\/+$/, '')
-      .replace(/\/v1\/traces$/i, '')
-      .replace(/\/v1$/i, '');
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
-function resolvePhoenixMcpPackage(env: NodeJS.ProcessEnv): string {
-  return env[PHOENIX_MCP_PACKAGE_ENV]?.trim() || DEFAULT_PHOENIX_MCP_PACKAGE;
-}
-
-function getTextContent(result: unknown): string {
-  const record = getRecord(result);
-  const content = Array.isArray(record?.['content']) ? record['content'] : [];
-  return content
-    .map((part) => getRecord(part))
-    .filter(
-      (part): part is Record<string, unknown> => part?.['type'] === 'text',
-    )
-    .map((part) => getString(part, 'text') ?? '')
-    .join('\n');
-}
-
-function parseJsonText(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(text.slice(start, end + 1)) as unknown;
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  }
-}
-
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  onTimeout?: () => void,
-): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          onTimeout?.();
-          reject(new Error('Phoenix MCP query timed out'));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
 }
 
 interface PhoenixRetryOptions {
@@ -1118,30 +969,6 @@ function findBestSpanLikeObject(
   );
 }
 
-function collectSpanLikeObjects(
-  value: unknown,
-  found: Array<Record<string, unknown>> = [],
-): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectSpanLikeObjects(item, found);
-    }
-    return found;
-  }
-  const record = getRecord(value);
-  if (!record) {
-    return found;
-  }
-  if (getString(record, 'name') && getRecord(record['attributes'])) {
-    found.push(record);
-    return found;
-  }
-  for (const child of Object.values(record)) {
-    collectSpanLikeObjects(child, found);
-  }
-  return found;
-}
-
 function isMatchingFailedSpan(
   span: Record<string, unknown>,
   failedToolName: string | undefined,
@@ -1164,46 +991,4 @@ function isFailedSpan(span: Record<string, unknown>): boolean {
   const attributes = getRecord(span['attributes']);
   const exitCode = getNumber(attributes, GEMINI_CLI_COMMAND_EXIT_CODE);
   return exitCode !== undefined && exitCode !== 0;
-}
-
-function getRecord(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function getString(
-  record: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = record?.[key];
-  return typeof value === 'string' ? value : undefined;
-}
-
-function getNumber(
-  record: Record<string, unknown> | undefined,
-  key: string,
-): number | undefined {
-  const value = record?.[key];
-  return typeof value === 'number' ? value : undefined;
-}
-
-function getBoolean(
-  record: Record<string, unknown> | undefined,
-  key: string,
-): boolean | undefined {
-  const value = record?.[key];
-  return typeof value === 'boolean' ? value : undefined;
-}
-
-function getStringList(
-  record: Record<string, unknown> | undefined,
-  key: string,
-): string[] {
-  const value = record?.[key];
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
 }

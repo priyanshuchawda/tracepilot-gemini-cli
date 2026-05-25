@@ -19,8 +19,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import dotenv from 'dotenv';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   register,
   trace,
@@ -36,6 +34,12 @@ import {
   GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
   GeminiCliOperation,
 } from '../packages/core/src/telemetry/constants.js';
+import {
+  connectDirectPhoenixMcpClient,
+  DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
+  getSpanList,
+  resolveDirectPhoenixMcpConfig,
+} from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
 import {
   runTracePilotEvals,
@@ -46,8 +50,7 @@ import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepil
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
-const PHOENIX_MCP_QUERY_TIMEOUT_MS = 180_000;
+const PHOENIX_MCP_QUERY_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
 const EXPECTED_CHANGED_FILES = [
   'src/config.js',
   'src/redact.js',
@@ -563,22 +566,14 @@ function findChangedFiles(
 async function queryPhoenixSession(
   sessionId: string,
 ): Promise<PhoenixSessionEvidence> {
-  const host = resolvePhoenixHost();
-  const project = process.env['PHOENIX_PROJECT']?.trim();
-  if (!host || !project || !process.env['PHOENIX_API_KEY']?.trim()) {
+  const directConfig = resolveDirectPhoenixMcpConfig(process.env);
+  if (!directConfig) {
     return degradedPhoenix('Phoenix API key, host, or project is missing.');
   }
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage()],
-    env: { ...process.env, PHOENIX_HOST: host, PHOENIX_PROJECT: project },
-  });
-  const client = new Client({
-    name: 'tracepilot-gemini-repair-demo',
-    version: '0.0.0',
+  const client = await connectDirectPhoenixMcpClient(directConfig, {
+    clientName: 'tracepilot-gemini-repair-demo',
   });
   try {
-    await client.connect(transport);
     const startTime = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     for (let attempt = 1; attempt <= 8; attempt++) {
       const spans: Array<Record<string, unknown>> = [];
@@ -587,21 +582,25 @@ async function queryPhoenixSession(
         GeminiCliOperation.ToolPhoenixMcp,
         GeminiCliOperation.SelfIntrospection,
       ]) {
-        const result = await client.callTool(
+        const result = await client.callGetSpans(
           {
-            name: 'get-spans',
-            arguments: {
-              project_identifier: project,
-              start_time: startTime,
-              names: [spanName],
-              session_id: sessionId,
-              limit: 20,
-            },
+            project_identifier: directConfig.project,
+            start_time: startTime,
+            names: [spanName],
+            session_id: sessionId,
+            limit: 20,
           },
-          undefined,
-          { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+          PHOENIX_MCP_QUERY_TIMEOUT_MS,
         );
-        spans.push(...getSpanList(parseJsonText(getTextContent(result))));
+        if (result.error) {
+          return {
+            ...degradedPhoenix(
+              `Phoenix MCP query failed: ${result.error.message}`,
+            ),
+            attempted: true,
+          };
+        }
+        spans.push(...getSpanList(result.data ?? result.llmContent));
       }
       const sessionSpans = spans.filter(
         (span) => getRecord(span.attributes)?.['session.id'] === sessionId,
@@ -674,7 +673,7 @@ async function queryPhoenixSession(
       attempted: true,
     };
   } finally {
-    await client.close().catch(() => undefined);
+    await client.close();
   }
 }
 
@@ -862,77 +861,6 @@ function printProofLines(
   );
   console.log(`SESSION_ID: ${report.sessionId}`);
   console.log(`REPORT: ${output}`);
-}
-
-function resolvePhoenixMcpPackage(): string {
-  return (
-    process.env['TRACEPILOT_PHOENIX_MCP_PACKAGE']?.trim() ||
-    DEFAULT_PHOENIX_MCP_PACKAGE
-  );
-}
-
-function resolvePhoenixHost(): string | undefined {
-  for (const candidate of [
-    process.env['PHOENIX_HOST'],
-    process.env['PHOENIX_BASE_URL'],
-    process.env['PHOENIX_COLLECTOR_ENDPOINT'],
-  ]) {
-    const normalized = normalizePhoenixUrl(candidate);
-    if (normalized) return normalized;
-  }
-  return undefined;
-}
-
-function normalizePhoenixUrl(value: string | undefined): string | undefined {
-  const trimmed = String(value ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) return undefined;
-  try {
-    const url = new URL(trimmed);
-    url.search = '';
-    url.hash = '';
-    url.pathname = url.pathname
-      .replace(/\/+$/, '')
-      .replace(/\/v1\/traces$/i, '')
-      .replace(/\/v1$/i, '');
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
-function getTextContent(result: unknown): string {
-  const content = getRecord(result)?.['content'];
-  return (Array.isArray(content) ? content : [])
-    .map((part) => getRecord(part))
-    .filter((part) => part?.['type'] === 'text')
-    .map((part) => getString(part, 'text') ?? '')
-    .join('\n');
-}
-
-function parseJsonText(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(text.slice(start, end + 1)) as unknown;
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  }
-}
-
-function getSpanList(payload: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(payload)) return payload.filter(isRecord);
-  const record = getRecord(payload);
-  const spans = record?.['spans'] ?? record?.['data'];
-  return Array.isArray(spans) ? spans.filter(isRecord) : [];
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {

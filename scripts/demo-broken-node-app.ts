@@ -12,8 +12,6 @@ import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   register,
   SpanStatusCode,
@@ -26,6 +24,12 @@ import {
   GEMINI_CLI_OUTPUT_SHA256,
   GEN_AI_TOOL_NAME,
 } from '../packages/core/src/telemetry/constants.js';
+import {
+  connectDirectPhoenixMcpClient,
+  DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
+  getSpanList,
+  resolveDirectPhoenixMcpConfig,
+} from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
 import {
   runTracePilotEvals,
@@ -35,8 +39,7 @@ import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/trace
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_API_BASE_URL = 'https://api.example.test';
-const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
-const PHOENIX_MCP_QUERY_TIMEOUT_MS = 180_000;
+const PHOENIX_MCP_QUERY_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
 
 interface CliOptions {
   workdir: string;
@@ -303,34 +306,21 @@ function registerPhoenixProvider(): NodeTracerProvider | undefined {
 async function queryPhoenixMcp(
   sessionId: string,
 ): Promise<Omit<PhoenixQueryEvidence, 'spanCreated' | 'exported'>> {
-  const host = resolvePhoenixHost();
-  if (!host || !process.env['PHOENIX_PROJECT']) {
+  const directConfig = resolveDirectPhoenixMcpConfig(process.env);
+  if (!directConfig) {
     return {
       attempted: false,
       visible: false,
       queryable: false,
-      reason: 'Phoenix MCP host/project env missing.',
+      reason: 'Phoenix MCP API key, host, or project env missing.',
     };
   }
-
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage()],
-    env: {
-      ...process.env,
-      PHOENIX_HOST: host,
-      PHOENIX_PROJECT: process.env['PHOENIX_PROJECT'],
-    },
-  });
-  const client = new Client({
-    name: 'tracepilot-broken-node-app-demo',
-    version: '0.0.0',
+  const client = await connectDirectPhoenixMcpClient(directConfig, {
+    clientName: 'tracepilot-broken-node-app-demo',
   });
 
   try {
-    await client.connect(transport);
-    const tools = await client.listTools();
-    const toolNames = tools.tools.map((tool) => tool.name);
+    const toolNames = await client.listTools();
     if (!toolNames.includes('get-spans')) {
       return {
         attempted: true,
@@ -342,20 +332,24 @@ async function queryPhoenixMcp(
 
     const startTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     for (let attempt = 1; attempt <= 4; attempt++) {
-      const result = await client.callTool(
+      const result = await client.callGetSpans(
         {
-          name: 'get-spans',
-          arguments: {
-            project_identifier: process.env['PHOENIX_PROJECT'],
-            start_time: startTime,
-            names: ['gemini_cli.tool.shell'],
-            limit: 100,
-          },
+          project_identifier: directConfig.project,
+          start_time: startTime,
+          names: ['gemini_cli.tool.shell'],
+          limit: 100,
         },
-        undefined,
-        { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+        PHOENIX_MCP_QUERY_TIMEOUT_MS,
       );
-      const spans = getSpanList(parseJsonText(getTextContent(result)));
+      if (result.error) {
+        return {
+          attempted: true,
+          visible: false,
+          queryable: false,
+          reason: result.error.message,
+        };
+      }
+      const spans = getSpanList(result.data ?? result.llmContent);
       const span = spans.find((candidate) => {
         const attributes = getRecord(candidate['attributes']);
         return attributes?.['tracepilot.demo_session'] === sessionId;
@@ -382,92 +376,8 @@ async function queryPhoenixMcp(
       reason: 'Phoenix MCP query completed but did not find the demo span.',
     };
   } finally {
-    await client.close().catch(() => undefined);
+    await client.close();
   }
-}
-
-function resolvePhoenixMcpPackage(): string {
-  return (
-    process.env['TRACEPILOT_PHOENIX_MCP_PACKAGE']?.trim() ||
-    DEFAULT_PHOENIX_MCP_PACKAGE
-  );
-}
-
-function resolvePhoenixHost(): string | undefined {
-  for (const value of [
-    process.env['PHOENIX_HOST'],
-    process.env['PHOENIX_BASE_URL'],
-    process.env['PHOENIX_COLLECTOR_ENDPOINT'],
-  ]) {
-    const resolved = normalizePhoenixBaseUrl(value);
-    if (resolved) {
-      return resolved;
-    }
-  }
-  return undefined;
-}
-
-function normalizePhoenixBaseUrl(
-  value: string | undefined,
-): string | undefined {
-  const trimmed = (value ?? '').trim().replace(/\/+$/, '');
-  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
-    return undefined;
-  }
-  try {
-    const url = new URL(trimmed);
-    url.search = '';
-    url.hash = '';
-    url.pathname = url.pathname
-      .replace(/\/+$/, '')
-      .replace(/\/v1\/traces$/i, '')
-      .replace(/\/v1$/i, '');
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
-function getTextContent(result: unknown): string {
-  const record = getRecord(result);
-  const content = record ? getArray(record['content']) : [];
-  return content
-    .map((part) => {
-      const partRecord = getRecord(part);
-      return partRecord?.['type'] === 'text'
-        ? getString(partRecord, 'text')
-        : '';
-    })
-    .join('\n');
-}
-
-function parseJsonText(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(text.slice(start, end + 1));
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  }
-}
-
-function getSpanList(payload: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(payload)) {
-    return payload.filter(isRecord);
-  }
-  const record = getRecord(payload);
-  if (!record) {
-    return [];
-  }
-  const spans = getArray(record['spans']) ?? getArray(record['data']) ?? [];
-  return spans.filter(isRecord);
 }
 
 async function applyRepair(demoDir: string): Promise<void> {
@@ -536,10 +446,6 @@ function getExecFailure(error: unknown): {
     stdout: getString(record, 'stdout') ?? '',
     stderr: getString(record, 'stderr') ?? getErrorMessage(error),
   };
-}
-
-function getArray(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined;
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {
