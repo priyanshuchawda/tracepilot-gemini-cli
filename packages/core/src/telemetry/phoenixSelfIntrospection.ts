@@ -753,12 +753,75 @@ function isRelevantHistoricalRepairEvidence(
   evidence: PhoenixHistoricalRepairEvidence,
   signature: TracePilotFailureSignature,
 ): boolean {
-  return (
-    evidence.signatureId === signature.id ||
-    evidence.rootCause === signature.taxonomy ||
-    (signature.outputSha256 !== undefined &&
-      evidence.outputSha256 === signature.outputSha256) ||
-    evidence.verificationPassed === true
+  if (evidence.signatureId !== undefined) {
+    return evidence.signatureId === signature.id;
+  }
+  if (
+    signature.outputSha256 !== undefined &&
+    evidence.outputSha256 === signature.outputSha256
+  ) {
+    return true;
+  }
+  if (evidence.rootCause !== signature.taxonomy) {
+    return false;
+  }
+  return hasHistoricalRepairSecondarySignal(evidence, signature);
+}
+
+function hasHistoricalRepairSecondarySignal(
+  evidence: PhoenixHistoricalRepairEvidence,
+  signature: TracePilotFailureSignature,
+): boolean {
+  const preview = normalizeHistoricalText(evidence.outputPreview);
+  if (!preview) {
+    return false;
+  }
+  const signatureSignals = [
+    ...signature.diagnostics,
+    ...signature.stackFrames,
+    ...signature.files,
+  ].map(normalizeHistoricalText);
+
+  return signatureSignals.some((signal) => {
+    if (!signal) {
+      return false;
+    }
+    return preview.includes(signal) || tokenOverlap(preview, signal) >= 0.35;
+  });
+}
+
+function normalizeHistoricalText(value: string | undefined): string {
+  return redactSensitiveText(value ?? '')
+    .value.toLowerCase()
+    .replace(/\b[a-f0-9]{7,64}\b/g, '<hash>')
+    .replace(/\b\d+:\d+\b/g, '<line:col>')
+    .replace(/\bline\s+\d+\b/g, 'line <n>')
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenOverlap(left: string, right: string): number {
+  const leftTokens = significantTokens(left);
+  const rightTokens = significantTokens(right);
+  if (leftTokens.size === 0 || rightTokens.size === 0) {
+    return 0;
+  }
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      intersection++;
+    }
+  }
+  return intersection / Math.min(leftTokens.size, rightTokens.size);
+}
+
+function significantTokens(value: string): Set<string> {
+  return new Set(
+    value
+      .split(/[^a-z0-9_./-]+/i)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3),
   );
 }
 
