@@ -49,6 +49,19 @@ describe('scripts/demo-broken-node-app.ts', () => {
     expect(report.phoenix.visible).toBe(false);
     expect(report.eval.ok).toBe(false);
     expect(report.eval.results).toHaveLength(7);
+    expect(
+      report.eval.results.find(
+        (result: { id: string }) => result.id === 'blocked_destructive_command',
+      ),
+    ).toMatchObject({
+      status: 'pass',
+      evidence: {
+        command: 'rm -rf /',
+        blocked: true,
+        observed: true,
+        level: 'blocked',
+      },
+    });
     expect(JSON.stringify(report)).not.toContain('sk-proj-demoSecret');
   }, 60000);
 });
