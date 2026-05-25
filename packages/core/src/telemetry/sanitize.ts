@@ -22,6 +22,7 @@ export interface OutputPreviewOptions {
 export interface RedactedOutputPreview {
   preview: string;
   sha256: string;
+  fingerprintVersion: 'redacted-sha256-v1';
   originalLength: number;
   truncated: boolean;
   redacted: boolean;
@@ -53,6 +54,27 @@ const SECRET_PATTERNS: Array<{
     replace: REDACTED,
   },
   {
+    pattern: /glpat-[0-9A-Za-z_-]{20,}/g,
+    replace: REDACTED,
+  },
+  {
+    pattern: /xox[baprs]-[0-9A-Za-z-]{20,}/g,
+    replace: REDACTED,
+  },
+  {
+    pattern: /\bAKIA[0-9A-Z]{16}\b/g,
+    replace: REDACTED,
+  },
+  {
+    pattern: /\bASIA[0-9A-Z]{16}\b/g,
+    replace: REDACTED,
+  },
+  {
+    pattern:
+      /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    replace: REDACTED,
+  },
+  {
     pattern: /\bAuthorization\s*:\s*[^\r\n]+/gi,
     replace: `Authorization: ${REDACTED}`,
   },
@@ -66,7 +88,18 @@ const SECRET_PATTERNS: Array<{
   },
   {
     pattern:
-      /\b(password|passwd|api[_-]?key|secret|token)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+      /\b(AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN))(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+    replace: (_match, key: string, separator: string) =>
+      `${key}${separator}${REDACTED}`,
+  },
+  {
+    pattern:
+      /\b((?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|mariadb|redis|rediss|amqp|amqps|ftp|https?):\/\/)([^/?#\s:@]+):([^/?#\s@]+)@/gi,
+    replace: (_match, scheme: string) => `${scheme}${REDACTED}@`,
+  },
+  {
+    pattern:
+      /\b([A-Z0-9_.-]*(?:password|passwd|api[_-]?key|access[_-]?key(?:[_-]?id)?|secret(?:[_-]?key)?|client[_-]?secret|private[_-]?key|refresh[_-]?token|session[_-]?token|token|webhook[_-]?url)[A-Z0-9_.-]*)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi,
     replace: (_match, key: string, separator: string) =>
       `${key}${separator}${REDACTED}`,
   },
@@ -92,18 +125,19 @@ export function createRedactedOutputPreview(
 ): RedactedOutputPreview {
   const headChars = options.headChars ?? 2000;
   const tailChars = options.tailChars ?? 2000;
-  const truncated = output.length > headChars + tailChars;
+  const redactedOutput = redactSensitiveText(output);
+  const truncated = redactedOutput.value.length > headChars + tailChars;
   const rawPreview = truncated
-    ? `${output.slice(0, headChars)}\n...[TRUNCATED OUTPUT]...\n${output.slice(-tailChars)}`
-    : output;
-  const redacted = redactSensitiveText(rawPreview);
+    ? `${redactedOutput.value.slice(0, headChars)}\n...[TRUNCATED OUTPUT]...\n${redactedOutput.value.slice(-tailChars)}`
+    : redactedOutput.value;
 
   return {
-    preview: redacted.value,
-    sha256: createHash('sha256').update(output).digest('hex'),
+    preview: rawPreview,
+    sha256: createHash('sha256').update(redactedOutput.value).digest('hex'),
+    fingerprintVersion: 'redacted-sha256-v1',
     originalLength: output.length,
     truncated,
-    redacted: redacted.redacted,
+    redacted: redactedOutput.redacted,
   };
 }
 
