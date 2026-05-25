@@ -186,6 +186,7 @@ describe('TracePilot observability intelligence primitives', () => {
     const artifact = createTracePilotRepairArtifact({
       schemaVersion: 1,
       sessionId: 'session-current',
+      phase: 'verified',
       failure: {
         summary: 'typescript parser failure',
         rootCause: 'typescript parser incompatibility',

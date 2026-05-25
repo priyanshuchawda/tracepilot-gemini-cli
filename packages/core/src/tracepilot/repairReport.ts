@@ -9,7 +9,16 @@ import { redactSensitiveText } from '../telemetry/sanitize.js';
 import type { TracePilotFailureSignature } from './failureSignature.js';
 import type { TracePilotConfidenceScore } from './repairConfidence.js';
 import type { TracePilotPatchRiskAssessment } from './repairRisk.js';
-import type { TracePilotVerificationResult } from './verificationMatrix.js';
+import {
+  calculateTracePilotRegressionConfidence,
+  type TracePilotVerificationResult,
+} from './verificationMatrix.js';
+
+export type TracePilotRepairPhase =
+  | 'planned'
+  | 'applied'
+  | 'verified'
+  | 'failed';
 
 export interface TracePilotMcpQueryRecord {
   serverName: string;
@@ -30,6 +39,7 @@ export interface TracePilotPatchSummary {
 export interface TracePilotRepairArtifact {
   schemaVersion: 1;
   sessionId: string;
+  phase: TracePilotRepairPhase;
   failure: {
     summary: string;
     rootCause: string;
@@ -65,12 +75,82 @@ export interface TracePilotRepairArtifact {
     retriesRequired: number;
     unsafeCommandsBlocked: number;
   };
+  completion?: TracePilotRepairCompletion;
+}
+
+export interface TracePilotRepairCompletion {
+  completedAt?: string;
+  attempts: number;
+  retryCommands: string[];
+  finalExitCode?: number;
+  verificationPassed: boolean;
+}
+
+export interface TracePilotCompletedRepairUpdate {
+  filesModified: string[];
+  patches: TracePilotPatchSummary[];
+  verificationMatrix: TracePilotVerificationResult[];
+  retryMetadata: {
+    attempts: number;
+    retryCommands: string[];
+    finalExitCode?: number;
+  };
+  repairDurationMs?: number;
+  completedAt?: string;
+  rollbackStrategy?: string[];
 }
 
 export function createTracePilotRepairArtifact(
   artifact: TracePilotRepairArtifact,
 ): TracePilotRepairArtifact {
   return sanitizeArtifact(artifact);
+}
+
+export function completeTracePilotRepairArtifact(
+  artifact: TracePilotRepairArtifact,
+  update: TracePilotCompletedRepairUpdate,
+): TracePilotRepairArtifact {
+  const verificationPassed = update.verificationMatrix.every(
+    (check) => !check.required || check.status === 'pass',
+  );
+  const phase: TracePilotRepairPhase = verificationPassed
+    ? 'verified'
+    : update.verificationMatrix.some((check) => check.status === 'fail')
+      ? 'failed'
+      : 'applied';
+  return sanitizeArtifact({
+    ...artifact,
+    phase,
+    repair: {
+      ...artifact.repair,
+      patches: update.patches,
+      filesModified: update.filesModified,
+    },
+    safety: {
+      ...artifact.safety,
+      rollbackStrategy:
+        update.rollbackStrategy ?? artifact.safety.rollbackStrategy,
+    },
+    verification: {
+      matrix: update.verificationMatrix,
+      regressionConfidence: calculateTracePilotRegressionConfidence(
+        update.verificationMatrix,
+      ),
+    },
+    metrics: {
+      ...artifact.metrics,
+      repairDurationMs:
+        update.repairDurationMs ?? artifact.metrics.repairDurationMs,
+      retriesRequired: Math.max(0, update.retryMetadata.attempts - 1),
+    },
+    completion: {
+      completedAt: update.completedAt,
+      attempts: update.retryMetadata.attempts,
+      retryCommands: update.retryMetadata.retryCommands,
+      finalExitCode: update.retryMetadata.finalExitCode,
+      verificationPassed,
+    },
+  });
 }
 
 export function renderTracePilotRepairMarkdown(
@@ -81,6 +161,7 @@ export function renderTracePilotRepairMarkdown(
     '# TracePilot Repair Report',
     '',
     `Session: ${sanitized.sessionId}`,
+    `Phase: ${sanitized.phase}`,
     `Failure signature: ${sanitized.failure.signature.id}`,
     `Root cause: ${sanitized.failure.rootCause}`,
     `Confidence: ${Math.round(sanitized.confidence.score * 100)}%`,
@@ -108,16 +189,26 @@ export function renderTracePilotRepairMarkdown(
     ...sanitized.repair.selectedStrategy.map((step) => `- ${step}`),
     '',
     '## Patches',
+    `Files modified: ${sanitized.repair.filesModified.join(', ') || 'none'}`,
     ...sanitized.repair.patches.map(
       (patch) =>
         `- ${patch.file}: +${patch.linesAdded}/-${patch.linesDeleted} ${patch.description}`,
     ),
+    sanitized.repair.patches.length === 0 ? '- none' : '',
     '',
     '## Verification Matrix',
     ...sanitized.verification.matrix.map(
       (check) =>
         `- ${check.id}: ${check.status}${check.command ? ` (${check.command})` : ''}`,
     ),
+    '',
+    '## Completion',
+    sanitized.completion
+      ? `Attempts: ${sanitized.completion.attempts}; verification_passed=${sanitized.completion.verificationPassed}; final_exit_code=${sanitized.completion.finalExitCode ?? 'unknown'}`
+      : 'Not completed yet.',
+    ...(sanitized.completion?.retryCommands.map(
+      (command) => `- retry: ${command}`,
+    ) ?? []),
     '',
     '## Safety',
     ...sanitized.safety.risk.reasons.map((reason) => `- ${reason}`),
@@ -141,6 +232,7 @@ function sanitizeArtifact(
   return {
     schemaVersion: artifact.schemaVersion,
     sessionId: sanitizeString(artifact.sessionId),
+    phase: artifact.phase,
     failure: {
       summary: sanitizeString(artifact.failure.summary),
       rootCause: sanitizeString(artifact.failure.rootCause),
@@ -220,6 +312,20 @@ function sanitizeArtifact(
       cappedBy: artifact.confidence.cappedBy.map(sanitizeString),
     },
     metrics: artifact.metrics,
+    completion:
+      artifact.completion === undefined
+        ? undefined
+        : {
+            completedAt:
+              artifact.completion.completedAt === undefined
+                ? undefined
+                : sanitizeString(artifact.completion.completedAt),
+            attempts: artifact.completion.attempts,
+            retryCommands:
+              artifact.completion.retryCommands.map(sanitizeString),
+            finalExitCode: artifact.completion.finalExitCode,
+            verificationPassed: artifact.completion.verificationPassed,
+          },
   };
 }
 

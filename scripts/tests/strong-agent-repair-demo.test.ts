@@ -65,6 +65,17 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     );
     expect(report.agent.mode).toBe('substitute');
     expect(report.repair.changedFiles).toHaveLength(3);
+    expect(report.repairArtifact).toMatchObject({
+      phase: 'failed',
+      repair: {
+        filesModified: ['src/config.js', 'src/redact.js', 'src/signature.js'],
+      },
+      completion: {
+        attempts: 1,
+        finalExitCode: 0,
+        verificationPassed: false,
+      },
+    });
     expect(report.repair.verifiedOutcomeRecorded).toBe(false);
     expect(report.causalTrace.chainComplete).toBe(false);
     expect(
