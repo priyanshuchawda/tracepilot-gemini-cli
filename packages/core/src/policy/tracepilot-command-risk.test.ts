@@ -28,6 +28,19 @@ describe('TracePilot command risk model', () => {
     ['printenv', 'blocked'],
     ['env', 'blocked'],
     ['rg -n "api_key|password" .', 'blocked'],
+    ['npm test && git push origin main', 'high'],
+    ['npm test; cat .env', 'blocked'],
+    ['echo ok | Select-String -Pattern "token"', 'blocked'],
+    ['powershell -Command "Get-Content .env"', 'blocked'],
+    ['pwsh -Command "Remove-Item -Recurse -Force C:\\"', 'blocked'],
+    ['powershell -EncodedCommand SQBFAFgA', 'high'],
+    ['cmd /c type .env', 'blocked'],
+    ['Remove-Item -Recurse -Force ./dist', 'high'],
+    ['ri -r -fo $HOME', 'blocked'],
+    ['del /s /q C:\\Users', 'blocked'],
+    ['Get-ChildItem Env:', 'blocked'],
+    ['gci env:', 'blocked'],
+    ['gc .env.local', 'blocked'],
   ] as const)('classifies %s as %s', (command, expected) => {
     expect(classifyTracePilotCommandRisk(command).level).toBe(expected);
   });
