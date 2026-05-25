@@ -41,6 +41,33 @@ const DEFAULT_TIMEOUT_MS = 180000;
 const DIRECT_PHOENIX_MCP_SERVER_NAME = 'tracepilot-phoenix-env';
 const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
 const PHOENIX_MCP_PACKAGE_ENV = 'TRACEPILOT_PHOENIX_MCP_PACKAGE';
+const PHOENIX_MCP_RETRIES_ENV = 'TRACEPILOT_PHOENIX_MCP_RETRIES';
+const PHOENIX_MCP_RETRY_BACKOFF_MS_ENV =
+  'TRACEPILOT_PHOENIX_MCP_RETRY_BACKOFF_MS';
+
+export type PhoenixQueryFailureReasonCode =
+  | 'flush_failed'
+  | 'mcp_unavailable'
+  | 'mcp_error'
+  | 'timeout'
+  | 'no_matching_span';
+
+export interface PhoenixQueryDiagnostics {
+  reasonCode?: PhoenixQueryFailureReasonCode;
+  serverName?: string;
+  toolName: string;
+  attemptedNames: string[];
+  projectIdentifier?: string;
+  sessionId?: string;
+  startTime?: string;
+  limit?: number;
+  spanCount?: number;
+  matchingEvidenceCount?: number;
+  attempts: number;
+  maxAttempts: number;
+  retryBackoffMs: number;
+  limitTruncationPossible: boolean;
+}
 
 interface PhoenixMcpToolResult {
   llmContent?: unknown;
@@ -62,16 +89,21 @@ export type PhoenixSelfIntrospectionResult =
       attempted: false;
       available: false;
       reason: string;
+      reasonCode?: PhoenixQueryFailureReasonCode;
+      diagnostics?: PhoenixQueryDiagnostics;
     }
   | {
       attempted: true;
       available: false;
       reason: string;
+      reasonCode?: PhoenixQueryFailureReasonCode;
+      diagnostics?: PhoenixQueryDiagnostics;
     }
   | {
       attempted: true;
       available: true;
       evidence: PhoenixTraceEvidence;
+      diagnostics?: PhoenixQueryDiagnostics;
     };
 
 export interface PhoenixHistoricalRepairEvidence {
@@ -93,18 +125,23 @@ export type PhoenixHistoricalRepairQueryResult =
       attempted: false;
       available: false;
       reason: string;
+      reasonCode?: PhoenixQueryFailureReasonCode;
+      diagnostics?: PhoenixQueryDiagnostics;
       evidence: [];
     }
   | {
       attempted: true;
       available: false;
       reason: string;
+      reasonCode?: PhoenixQueryFailureReasonCode;
+      diagnostics?: PhoenixQueryDiagnostics;
       evidence: [];
     }
   | {
       attempted: true;
       available: true;
       evidence: PhoenixHistoricalRepairEvidence[];
+      diagnostics?: PhoenixQueryDiagnostics;
     };
 
 export async function queryPhoenixForFailedToolCall(
@@ -118,7 +155,10 @@ export async function queryPhoenixForFailedToolCall(
     return {
       attempted: true,
       available: false,
-      reason: `Phoenix telemetry flush failed: ${getErrorMessage(error)}`,
+      reason: `Phoenix telemetry flush failed: ${
+        redactSensitiveText(getErrorMessage(error)).value
+      }`,
+      reasonCode: 'flush_failed',
     };
   }
 
@@ -143,6 +183,7 @@ export async function queryPhoenixForFailedToolCall(
         config.getSessionId(),
         call.request.name,
       );
+      const retryOptions = getPhoenixRetryOptions(process.env);
       const phoenixQuery = getPhoenixMcpQuery(config, args, timeoutMs);
       if (!phoenixQuery) {
         const result: PhoenixSelfIntrospectionResult = {
@@ -150,6 +191,12 @@ export async function queryPhoenixForFailedToolCall(
           available: false,
           reason:
             'Phoenix MCP client unavailable or PHOENIX_API_KEY/PHOENIX_PROJECT/Phoenix host env is missing.',
+          reasonCode: 'mcp_unavailable',
+          diagnostics: buildPhoenixQueryDiagnostics({
+            args,
+            reasonCode: 'mcp_unavailable',
+            retryOptions,
+          }),
         };
         metadata.output = result;
         return result;
@@ -157,7 +204,7 @@ export async function queryPhoenixForFailedToolCall(
 
       try {
         const controller = new AbortController();
-        const toolResult = await runInDevTraceSpan(
+        const toolQuery = await runInDevTraceSpan(
           {
             operation: GeminiCliOperation.ToolPhoenixMcp,
             logPrompts: config.getTelemetryLogPromptsEnabled(),
@@ -176,26 +223,55 @@ export async function queryPhoenixForFailedToolCall(
               args,
             };
 
-            const result = await withTimeout(
-              phoenixQuery.execute(controller.signal),
-              timeoutMs,
-              () => controller.abort(),
+            const { result, attempts } = await executePhoenixQueryWithRetry(
+              () =>
+                withTimeout(
+                  phoenixQuery.execute(controller.signal),
+                  timeoutMs,
+                  () => controller.abort(),
+                ),
+              retryOptions,
             );
+            const diagnostics = buildPhoenixQueryDiagnostics({
+              args,
+              serverName: phoenixQuery.serverName,
+              result,
+              attempts,
+              retryOptions,
+            });
 
             if (result.error) {
               metadata.error = result.error;
               metadata.output = {
                 status: 'error',
-                message: result.error.message,
+                message: redactSensitiveText(result.error.message).value,
+                diagnostics,
               };
             } else {
-              metadata.output = { status: 'ok' };
+              metadata.output = { status: 'ok', diagnostics };
             }
-            return result;
+            return { result, diagnostics };
           },
         );
+        const toolResult = toolQuery.result;
         if (toolResult.error) {
-          throw new Error(toolResult.error.message);
+          const reasonCode = classifyPhoenixQueryError(
+            toolResult.error.message,
+          );
+          const result: PhoenixSelfIntrospectionResult = {
+            attempted: true,
+            available: false,
+            reason: `Phoenix MCP query failed: ${
+              redactSensitiveText(toolResult.error.message).value
+            }`,
+            reasonCode,
+            diagnostics: {
+              ...toolQuery.diagnostics,
+              reasonCode,
+            },
+          };
+          metadata.output = result;
+          return result;
         }
         const evidence = extractEvidence(
           {
@@ -205,11 +281,24 @@ export async function queryPhoenixForFailedToolCall(
           },
           call.request.name,
         );
+        const diagnostics = buildPhoenixQueryDiagnostics({
+          args,
+          serverName: phoenixQuery.serverName,
+          result: toolResult,
+          attempts: toolQuery.diagnostics.attempts,
+          matchingEvidenceCount: evidence ? 1 : 0,
+          retryOptions,
+        });
         if (!evidence) {
           const result: PhoenixSelfIntrospectionResult = {
             attempted: true,
             available: false,
             reason: `Phoenix MCP did not return matching failed span evidence for ${call.request.name}.`,
+            reasonCode: 'no_matching_span',
+            diagnostics: {
+              ...diagnostics,
+              reasonCode: 'no_matching_span',
+            },
           };
           metadata.output = result;
           return result;
@@ -218,14 +307,25 @@ export async function queryPhoenixForFailedToolCall(
           attempted: true,
           available: true,
           evidence,
+          diagnostics,
         };
         metadata.output = result;
         return result;
       } catch (error) {
+        const reasonCode = classifyPhoenixQueryError(error);
         const result: PhoenixSelfIntrospectionResult = {
           attempted: true,
           available: false,
-          reason: `Phoenix MCP query failed: ${getErrorMessage(error)}`,
+          reason: `Phoenix MCP query failed: ${
+            redactSensitiveText(getErrorMessage(error)).value
+          }`,
+          reasonCode,
+          diagnostics: buildPhoenixQueryDiagnostics({
+            args,
+            serverName: phoenixQuery.serverName,
+            reasonCode,
+            retryOptions,
+          }),
         };
         metadata.error = error;
         metadata.output = result;
@@ -246,9 +346,10 @@ export async function queryPhoenixForHistoricalRepairs(
     return {
       attempted: true,
       available: false,
-      reason: `Phoenix telemetry flush failed before historical repair query: ${getErrorMessage(
-        error,
-      )}`,
+      reason: `Phoenix telemetry flush failed before historical repair query: ${
+        redactSensitiveText(getErrorMessage(error)).value
+      }`,
+      reasonCode: 'flush_failed',
       evidence: [],
     };
   }
@@ -273,6 +374,7 @@ export async function queryPhoenixForHistoricalRepairs(
       };
 
       const args = buildPhoenixHistoricalRepairArgs(signature);
+      const retryOptions = getPhoenixRetryOptions(process.env);
       const phoenixQuery = getPhoenixMcpQuery(config, args, timeoutMs);
       if (!phoenixQuery) {
         const result: PhoenixHistoricalRepairQueryResult = {
@@ -280,6 +382,12 @@ export async function queryPhoenixForHistoricalRepairs(
           available: false,
           reason:
             'Phoenix MCP client unavailable or PHOENIX_API_KEY/PHOENIX_PROJECT/Phoenix host env is missing.',
+          reasonCode: 'mcp_unavailable',
+          diagnostics: buildPhoenixQueryDiagnostics({
+            args,
+            reasonCode: 'mcp_unavailable',
+            retryOptions,
+          }),
           evidence: [],
         };
         metadata.output = result;
@@ -288,7 +396,7 @@ export async function queryPhoenixForHistoricalRepairs(
 
       try {
         const controller = new AbortController();
-        const toolResult = await runInDevTraceSpan(
+        const toolQuery = await runInDevTraceSpan(
           {
             operation: GeminiCliOperation.ToolPhoenixMcp,
             logPrompts: config.getTelemetryLogPromptsEnabled(),
@@ -307,26 +415,56 @@ export async function queryPhoenixForHistoricalRepairs(
               args,
             };
 
-            const result = await withTimeout(
-              phoenixQuery.execute(controller.signal),
-              timeoutMs,
-              () => controller.abort(),
+            const { result, attempts } = await executePhoenixQueryWithRetry(
+              () =>
+                withTimeout(
+                  phoenixQuery.execute(controller.signal),
+                  timeoutMs,
+                  () => controller.abort(),
+                ),
+              retryOptions,
             );
+            const diagnostics = buildPhoenixQueryDiagnostics({
+              args,
+              serverName: phoenixQuery.serverName,
+              result,
+              attempts,
+              retryOptions,
+            });
 
             if (result.error) {
               metadata.error = result.error;
               metadata.output = {
                 status: 'error',
-                message: result.error.message,
+                message: redactSensitiveText(result.error.message).value,
+                diagnostics,
               };
             } else {
-              metadata.output = { status: 'ok' };
+              metadata.output = { status: 'ok', diagnostics };
             }
-            return result;
+            return { result, diagnostics };
           },
         );
+        const toolResult = toolQuery.result;
         if (toolResult.error) {
-          throw new Error(toolResult.error.message);
+          const reasonCode = classifyPhoenixQueryError(
+            toolResult.error.message,
+          );
+          const result: PhoenixHistoricalRepairQueryResult = {
+            attempted: true,
+            available: false,
+            reason: `Phoenix historical repair query failed: ${
+              redactSensitiveText(toolResult.error.message).value
+            }`,
+            reasonCode,
+            diagnostics: {
+              ...toolQuery.diagnostics,
+              reasonCode,
+            },
+            evidence: [],
+          };
+          metadata.output = result;
+          return result;
         }
         const evidence = extractHistoricalRepairEvidence(
           {
@@ -336,17 +474,31 @@ export async function queryPhoenixForHistoricalRepairs(
           },
           signature,
         );
+        const diagnostics = buildPhoenixQueryDiagnostics({
+          args,
+          serverName: phoenixQuery.serverName,
+          result: toolResult,
+          attempts: toolQuery.diagnostics.attempts,
+          matchingEvidenceCount: evidence.length,
+          retryOptions,
+        });
         const result: PhoenixHistoricalRepairQueryResult =
           evidence.length > 0
             ? {
                 attempted: true,
                 available: true,
                 evidence,
+                diagnostics,
               }
             : {
                 attempted: true,
                 available: false,
                 reason: `Phoenix MCP returned no historical repair spans matching ${signature.id}.`,
+                reasonCode: 'no_matching_span',
+                diagnostics: {
+                  ...diagnostics,
+                  reasonCode: 'no_matching_span',
+                },
                 evidence: [],
               };
 
@@ -358,12 +510,20 @@ export async function queryPhoenixForHistoricalRepairs(
         metadata.output = result;
         return result;
       } catch (error) {
+        const reasonCode = classifyPhoenixQueryError(error);
         const result: PhoenixHistoricalRepairQueryResult = {
           attempted: true,
           available: false,
-          reason: `Phoenix historical repair query failed: ${getErrorMessage(
-            error,
-          )}`,
+          reason: `Phoenix historical repair query failed: ${
+            redactSensitiveText(getErrorMessage(error)).value
+          }`,
+          reasonCode,
+          diagnostics: buildPhoenixQueryDiagnostics({
+            args,
+            serverName: phoenixQuery.serverName,
+            reasonCode,
+            retryOptions,
+          }),
           evidence: [],
         };
         metadata.error = error;
@@ -666,6 +826,108 @@ async function withTimeout<T>(
   }
 }
 
+interface PhoenixRetryOptions {
+  maxAttempts: number;
+  backoffMs: number;
+}
+
+async function executePhoenixQueryWithRetry(
+  execute: () => Promise<PhoenixMcpToolResult>,
+  options: PhoenixRetryOptions,
+): Promise<{ result: PhoenixMcpToolResult; attempts: number }> {
+  let attempts = 0;
+  let lastError: unknown;
+
+  while (attempts < options.maxAttempts) {
+    attempts++;
+    try {
+      const result = await execute();
+      if (!result.error || attempts >= options.maxAttempts) {
+        return { result, attempts };
+      }
+      lastError = new Error(result.error.message);
+    } catch (error) {
+      lastError = error;
+      if (attempts >= options.maxAttempts) {
+        throw error;
+      }
+    }
+    await sleep(options.backoffMs);
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Phoenix MCP query failed');
+}
+
+function getPhoenixRetryOptions(env: NodeJS.ProcessEnv): PhoenixRetryOptions {
+  return {
+    maxAttempts: Math.max(1, parsePositiveInt(env[PHOENIX_MCP_RETRIES_ENV], 1)),
+    backoffMs: parsePositiveInt(env[PHOENIX_MCP_RETRY_BACKOFF_MS_ENV], 250),
+  };
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function classifyPhoenixQueryError(
+  error: unknown,
+): PhoenixQueryFailureReasonCode {
+  return getErrorMessage(error).toLowerCase().includes('timed out')
+    ? 'timeout'
+    : 'mcp_error';
+}
+
+function buildPhoenixQueryDiagnostics(input: {
+  args: Record<string, unknown>;
+  serverName?: string;
+  result?: PhoenixMcpToolResult;
+  reasonCode?: PhoenixQueryFailureReasonCode;
+  matchingEvidenceCount?: number;
+  attempts?: number;
+  retryOptions: PhoenixRetryOptions;
+}): PhoenixQueryDiagnostics {
+  const spanCount =
+    input.result === undefined
+      ? undefined
+      : collectSpanLikeObjects(
+          JSON.parse(
+            safeJsonStringify({
+              llmContent: input.result.llmContent,
+              returnDisplay: input.result.returnDisplay,
+              data: input.result.data,
+            }),
+          ) as unknown,
+        ).length;
+  const limit = getNumber(input.args, 'limit');
+  return {
+    reasonCode: input.reasonCode,
+    serverName: input.serverName,
+    toolName: PHOENIX_MCP_TOOL_NAME,
+    attemptedNames: getStringList(input.args, 'names'),
+    projectIdentifier: getString(input.args, 'project_identifier'),
+    sessionId: getString(input.args, 'session_id'),
+    startTime: getString(input.args, 'start_time'),
+    limit,
+    spanCount,
+    matchingEvidenceCount: input.matchingEvidenceCount,
+    attempts: input.attempts ?? 0,
+    maxAttempts: input.retryOptions.maxAttempts,
+    retryBackoffMs: input.retryOptions.backoffMs,
+    limitTruncationPossible:
+      spanCount !== undefined && limit !== undefined && spanCount >= limit,
+  };
+}
+
 function extractEvidence(
   value: unknown,
   failedToolName?: string,
@@ -934,4 +1196,14 @@ function getBoolean(
 ): boolean | undefined {
   const value = record?.[key];
   return typeof value === 'boolean' ? value : undefined;
+}
+
+function getStringList(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string[] {
+  const value = record?.[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
