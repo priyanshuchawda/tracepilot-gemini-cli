@@ -14,6 +14,7 @@ const phoenixMcpLaunchers = [
   'scripts/demo-gemini-repair-agent.ts',
   'scripts/demo-phoenix-repair-memory-replay.ts',
 ];
+const phoenixMcpUtility = 'packages/core/src/telemetry/phoenixMcpUtils.ts';
 const defaultPackageSpec = '@arizeai/phoenix-mcp@4.0.13';
 const floatingPackageSpec = ['@arizeai/phoenix-mcp', 'latest'].join('@');
 
@@ -22,11 +23,25 @@ describe('Phoenix MCP package policy', () => {
     const { readFileSync } =
       await vi.importActual<typeof import('node:fs')>('node:fs');
 
-    for (const file of phoenixMcpLaunchers) {
+    for (const file of [phoenixMcpUtility, ...phoenixMcpLaunchers]) {
       const content = readFileSync(path.resolve(file), 'utf8');
 
       expect(content, file).not.toContain(floatingPackageSpec);
-      expect(content, file).toContain(defaultPackageSpec);
+    }
+    expect(readFileSync(path.resolve(phoenixMcpUtility), 'utf8')).toContain(
+      defaultPackageSpec,
+    );
+  });
+
+  it('routes launchers through the shared Phoenix MCP utility', async () => {
+    const { readFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+
+    for (const file of phoenixMcpLaunchers) {
+      const content = readFileSync(path.resolve(file), 'utf8');
+      expect(content, file).toMatch(
+        /phoenixMcpUtils|resolveDirectPhoenixMcpConfig/,
+      );
     }
   });
 });

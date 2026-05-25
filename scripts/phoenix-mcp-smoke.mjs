@@ -1,12 +1,8 @@
 #!/usr/bin/env node
 import dotenv from 'dotenv';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 dotenv.config({ quiet: true });
 
-const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
-const PHOENIX_MCP_QUERY_TIMEOUT_MS = 180_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const secretValues = [
@@ -29,53 +25,6 @@ function fail(message, code = 1) {
   process.exit(code);
 }
 
-function resolvePhoenixHost() {
-  const host = resolvePhoenixBaseUrl(process.env);
-
-  if (!host) {
-    fail(
-      'Missing Phoenix MCP host. Set PHOENIX_HOST, PHOENIX_BASE_URL, or a Phoenix Cloud PHOENIX_COLLECTOR_ENDPOINT.',
-      2,
-    );
-  }
-  return host;
-}
-
-function resolvePhoenixBaseUrl(env) {
-  for (const value of [
-    env.PHOENIX_HOST,
-    env.PHOENIX_BASE_URL,
-    env.PHOENIX_COLLECTOR_ENDPOINT,
-  ]) {
-    const resolved = normalizePhoenixUrl(value);
-    if (resolved) {
-      return resolved;
-    }
-  }
-  return undefined;
-}
-
-function normalizePhoenixUrl(value) {
-  const trimmed = String(value ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
-    return undefined;
-  }
-  try {
-    const url = new URL(trimmed);
-    url.search = '';
-    url.hash = '';
-    url.pathname = url.pathname
-      .replace(/\/+$/, '')
-      .replace(/\/v1\/traces$/i, '')
-      .replace(/\/v1$/i, '');
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
 function assertPhoenixEnv() {
   if (!process.env.PHOENIX_API_KEY) {
     fail('Missing PHOENIX_API_KEY for Phoenix MCP smoke.', 2);
@@ -94,41 +43,16 @@ function assertPhoenixEnv() {
   }
 }
 
-function resolvePhoenixMcpPackage(env = process.env) {
-  return (
-    env.TRACEPILOT_PHOENIX_MCP_PACKAGE?.trim() || DEFAULT_PHOENIX_MCP_PACKAGE
-  );
-}
-
-function getTextContent(result) {
-  return (result.content ?? [])
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
-}
-
-function parseJsonText(text) {
+async function loadPhoenixMcpUtils() {
   try {
-    return JSON.parse(text);
-  } catch {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse(text.slice(start, end + 1));
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
+    return await import(
+      '../packages/core/dist/src/telemetry/phoenixMcpUtils.js'
+    );
+  } catch (error) {
+    fail(
+      `Could not load packages/core/dist/src/telemetry/phoenixMcpUtils.js. Run \`npm run build -w @google/gemini-cli-core\` first. ${error?.message ?? error}`,
+    );
   }
-}
-
-function getSpanList(payload) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.spans)) return payload.spans;
-  if (Array.isArray(payload?.data)) return payload.data;
-  return [];
 }
 
 async function createSmokeSpan(sessionId) {
@@ -194,25 +118,13 @@ async function createSmokeSpan(sessionId) {
   }
 }
 
-async function querySmokeSpan(sessionId, host) {
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage()],
-    env: {
-      ...process.env,
-      PHOENIX_HOST: host,
-      PHOENIX_PROJECT: process.env.PHOENIX_PROJECT,
-    },
-  });
-  const client = new Client({
-    name: 'tracepilot-phoenix-mcp-smoke',
-    version: '0.0.0',
+async function querySmokeSpan(sessionId, phoenixMcp, directConfig) {
+  const client = await phoenixMcp.connectDirectPhoenixMcpClient(directConfig, {
+    clientName: 'tracepilot-phoenix-mcp-smoke',
   });
 
   try {
-    await client.connect(transport);
-    const tools = await client.listTools();
-    const toolNames = tools.tools.map((tool) => tool.name);
+    const toolNames = await client.listTools();
     if (!toolNames.includes('get-spans')) {
       fail('Phoenix MCP connected but did not expose get-spans.');
     }
@@ -220,26 +132,20 @@ async function querySmokeSpan(sessionId, host) {
     const startTime = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     let lastError = '';
     for (let attempt = 1; attempt <= 8; attempt++) {
-      const result = await client.callTool(
+      const result = await client.callGetSpans(
         {
-          name: 'get-spans',
-          arguments: {
-            project_identifier: process.env.PHOENIX_PROJECT,
-            start_time: startTime,
-            names: ['gemini_cli.agent_turn'],
-            limit: 100,
-          },
+          project_identifier: directConfig.project,
+          start_time: startTime,
+          names: ['gemini_cli.agent_turn'],
+          limit: 100,
         },
-        undefined,
-        { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+        phoenixMcp.DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
       );
 
-      const text = getTextContent(result);
-      if (result.isError) {
-        lastError = text || 'get-spans returned an MCP error';
+      if (result.error) {
+        lastError = result.error.message || 'get-spans returned an MCP error';
       } else {
-        const payload = parseJsonText(text);
-        const spans = getSpanList(payload);
+        const spans = phoenixMcp.getSpanList(result.data ?? result.llmContent);
         const smokeSpan = spans.find((span) => {
           const attributes = span.attributes ?? {};
           return (
@@ -264,16 +170,23 @@ async function querySmokeSpan(sessionId, host) {
 
     fail(`Phoenix MCP query did not find the smoke span: ${lastError}`);
   } finally {
-    await client.close().catch(() => undefined);
+    await client.close();
   }
 }
 
+const phoenixMcp = await loadPhoenixMcpUtils();
 assertPhoenixEnv();
-const host = resolvePhoenixHost();
+const directConfig = phoenixMcp.resolveDirectPhoenixMcpConfig(process.env);
+if (!directConfig) {
+  fail(
+    'Missing Phoenix MCP connection env. Set PHOENIX_API_KEY, PHOENIX_PROJECT, and PHOENIX_HOST, PHOENIX_BASE_URL, or PHOENIX_COLLECTOR_ENDPOINT.',
+    2,
+  );
+}
 const sessionId = `tracepilot-mcp-smoke-${Date.now()}`;
 
 await createSmokeSpan(sessionId);
-const evidence = await querySmokeSpan(sessionId, host);
+const evidence = await querySmokeSpan(sessionId, phoenixMcp, directConfig);
 
 console.log(
   JSON.stringify(

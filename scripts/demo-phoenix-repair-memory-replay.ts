@@ -11,13 +11,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import dotenv from 'dotenv';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { GeminiCliOperation } from '../packages/core/src/telemetry/constants.js';
+import {
+  connectDirectPhoenixMcpClient,
+  DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
+  getSpanList,
+  resolveDirectPhoenixMcpConfig,
+} from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
-const PHOENIX_MCP_QUERY_TIMEOUT_MS = 180_000;
+const PHOENIX_MCP_QUERY_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
 
 interface Options {
   workdir: string;
@@ -213,9 +216,8 @@ function skippedReplay(options: Options): RepairSessionReport {
 async function waitForSeedOutcome(
   seedSessionId: string,
 ): Promise<SeedOutcomeVisibility> {
-  const host = resolvePhoenixHost();
-  const project = process.env['PHOENIX_PROJECT']?.trim();
-  if (!host || !project || !process.env['PHOENIX_API_KEY']?.trim()) {
+  const directConfig = resolveDirectPhoenixMcpConfig(process.env);
+  if (!directConfig) {
     return {
       attempted: false,
       visible: false,
@@ -223,33 +225,30 @@ async function waitForSeedOutcome(
       reason: 'Phoenix API key, host, or project is missing.',
     };
   }
-  const client = new Client({
-    name: 'tracepilot-phoenix-seed-outcome-demo',
-    version: '0.0.0',
-  });
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage()],
-    env: { ...process.env, PHOENIX_HOST: host, PHOENIX_PROJECT: project },
+  const client = await connectDirectPhoenixMcpClient(directConfig, {
+    clientName: 'tracepilot-phoenix-seed-outcome-demo',
   });
   try {
-    await client.connect(transport);
     for (let attempt = 1; attempt <= 8; attempt++) {
-      const result = await client.callTool(
+      const result = await client.callGetSpans(
         {
-          name: 'get-spans',
-          arguments: {
-            project_identifier: project,
-            start_time: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            names: [GeminiCliOperation.RepairReport],
-            session_id: seedSessionId,
-            limit: 20,
-          },
+          project_identifier: directConfig.project,
+          start_time: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          names: [GeminiCliOperation.RepairReport],
+          session_id: seedSessionId,
+          limit: 20,
         },
-        undefined,
-        { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+        PHOENIX_MCP_QUERY_TIMEOUT_MS,
       );
-      const visible = getSpanList(parseJsonText(getTextContent(result))).some(
+      if (result.error) {
+        return {
+          attempted: true,
+          visible: false,
+          simulated: false,
+          reason: `Phoenix seed-outcome query failed: ${result.error.message}`,
+        };
+      }
+      const visible = getSpanList(result.data ?? result.llmContent).some(
         (span) =>
           getRecord(span.attributes)?.['session.id'] === seedSessionId &&
           getRecord(span.attributes)?.[
@@ -277,7 +276,7 @@ async function waitForSeedOutcome(
       reason: `Phoenix seed-outcome query failed: ${getErrorMessage(error)}`,
     };
   } finally {
-    await client.close().catch(() => undefined);
+    await client.close();
   }
 }
 
@@ -285,9 +284,8 @@ async function queryReplayMemory(
   replaySessionId: string,
   seedSessionId: string,
 ): Promise<MemoryMatch> {
-  const host = resolvePhoenixHost();
-  const project = process.env['PHOENIX_PROJECT']?.trim();
-  if (!host || !project || !process.env['PHOENIX_API_KEY']?.trim()) {
+  const directConfig = resolveDirectPhoenixMcpConfig(process.env);
+  if (!directConfig) {
     return {
       attempted: false,
       matched: false,
@@ -297,33 +295,33 @@ async function queryReplayMemory(
       reason: 'Phoenix API key, host, or project is missing.',
     };
   }
-  const client = new Client({
-    name: 'tracepilot-phoenix-repair-memory-demo',
-    version: '0.0.0',
-  });
-  const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage()],
-    env: { ...process.env, PHOENIX_HOST: host, PHOENIX_PROJECT: project },
+  const client = await connectDirectPhoenixMcpClient(directConfig, {
+    clientName: 'tracepilot-phoenix-repair-memory-demo',
   });
   try {
-    await client.connect(transport);
     for (let attempt = 1; attempt <= 8; attempt++) {
-      const result = await client.callTool(
+      const result = await client.callGetSpans(
         {
-          name: 'get-spans',
-          arguments: {
-            project_identifier: project,
-            start_time: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            names: [GeminiCliOperation.RepairMemoryRetrieve],
-            session_id: replaySessionId,
-            limit: 20,
-          },
+          project_identifier: directConfig.project,
+          start_time: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          names: [GeminiCliOperation.RepairMemoryRetrieve],
+          session_id: replaySessionId,
+          limit: 20,
         },
-        undefined,
-        { timeout: PHOENIX_MCP_QUERY_TIMEOUT_MS },
+        PHOENIX_MCP_QUERY_TIMEOUT_MS,
       );
-      const span = getSpanList(parseJsonText(getTextContent(result))).find(
+      if (result.error) {
+        return {
+          attempted: true,
+          matched: false,
+          seedSessionIds: [],
+          replayPlanVisible: false,
+          memoryRetrievalVisible: false,
+          simulated: false,
+          reason: `Phoenix memory query failed: ${result.error.message}`,
+        };
+      }
+      const span = getSpanList(result.data ?? result.llmContent).find(
         (candidate) =>
           getRecord(candidate.attributes)?.['session.id'] === replaySessionId,
       );
@@ -368,7 +366,7 @@ async function queryReplayMemory(
       reason: `Phoenix memory query failed: ${getErrorMessage(error)}`,
     };
   } finally {
-    await client.close().catch(() => undefined);
+    await client.close();
   }
 }
 
@@ -406,71 +404,6 @@ function printProofLines(
   console.log(`SEED_SESSION_ID: ${report.seed.sessionId}`);
   console.log(`REPLAY_SESSION_ID: ${report.replay.sessionId}`);
   console.log(`REPORT: ${output}`);
-}
-
-function resolvePhoenixMcpPackage(): string {
-  return (
-    process.env['TRACEPILOT_PHOENIX_MCP_PACKAGE']?.trim() ||
-    DEFAULT_PHOENIX_MCP_PACKAGE
-  );
-}
-
-function resolvePhoenixHost(): string | undefined {
-  for (const candidate of [
-    process.env['PHOENIX_HOST'],
-    process.env['PHOENIX_BASE_URL'],
-    process.env['PHOENIX_COLLECTOR_ENDPOINT'],
-  ]) {
-    const normalized = normalizePhoenixUrl(candidate);
-    if (normalized) return normalized;
-  }
-  return undefined;
-}
-
-function normalizePhoenixUrl(value: string | undefined): string | undefined {
-  const trimmed = String(value ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) return undefined;
-  try {
-    const url = new URL(trimmed);
-    url.search = '';
-    url.hash = '';
-    url.pathname = url.pathname
-      .replace(/\/+$/, '')
-      .replace(/\/v1\/traces$/i, '')
-      .replace(/\/v1$/i, '');
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
-}
-
-function getTextContent(result: unknown): string {
-  const content = getRecord(result)?.['content'];
-  return (Array.isArray(content) ? content : [])
-    .map((part) => getRecord(part))
-    .filter((part) => part?.['type'] === 'text')
-    .map((part) => getString(part, 'text') ?? '')
-    .join('\n');
-}
-
-function parseJsonText(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    return start >= 0 && end > start
-      ? (JSON.parse(text.slice(start, end + 1)) as unknown)
-      : undefined;
-  }
-}
-
-function getSpanList(payload: unknown): Array<Record<string, unknown>> {
-  const record = getRecord(payload);
-  const spans = record?.['spans'] ?? record?.['data'];
-  return Array.isArray(spans) ? spans.filter(isRecord) : [];
 }
 
 function containsText(value: unknown, expected: string): boolean {
