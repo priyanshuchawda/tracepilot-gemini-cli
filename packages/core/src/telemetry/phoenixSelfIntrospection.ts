@@ -27,6 +27,8 @@ import {
   GEMINI_CLI_REPAIR_STRATEGY,
   GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
   GeminiCliOperation,
+  GEN_AI_CONVERSATION_ID,
+  GEN_AI_TOOL_CALL_ID,
   GEN_AI_TOOL_NAME,
 } from './constants.js';
 import type { TracePilotFailureSignature } from '../tracepilot/failureSignature.js';
@@ -50,6 +52,11 @@ import {
 } from './phoenixMcpUtils.js';
 
 const DEFAULT_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
+const DEFAULT_PHOENIX_MCP_PAGE_LIMIT = 100;
+const DEFAULT_PHOENIX_MCP_MAX_PAGES = 3;
+const DEFAULT_FAILED_TOOL_LOOKBACK_MS = 60 * 60 * 1000;
+const WIDENED_FAILED_TOOL_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+const TOOL_CALL_TIME_BUFFER_MS = 5 * 60 * 1000;
 const PHOENIX_MCP_RETRIES_ENV = 'TRACEPILOT_PHOENIX_MCP_RETRIES';
 const PHOENIX_MCP_RETRY_BACKOFF_MS_ENV =
   'TRACEPILOT_PHOENIX_MCP_RETRY_BACKOFF_MS';
@@ -69,13 +76,22 @@ export interface PhoenixQueryDiagnostics {
   projectIdentifier?: string;
   sessionId?: string;
   startTime?: string;
+  endTime?: string;
   limit?: number;
   spanCount?: number;
+  candidateCount?: number;
   matchingEvidenceCount?: number;
   attempts: number;
   maxAttempts: number;
+  pages: number;
+  maxPages: number;
+  pageSpanCounts: number[];
   retryBackoffMs: number;
   limitTruncationPossible: boolean;
+  nextCursorSeen: boolean;
+  queryWidened: boolean;
+  selectedEvidenceReason?: string;
+  selectedSpanTimestamp?: string;
 }
 
 export interface PhoenixTraceEvidence {
@@ -120,6 +136,7 @@ export interface PhoenixHistoricalRepairEvidence {
   verificationPassed?: boolean;
   outputSha256?: string;
   outputPreview?: string;
+  spanTimestamp?: string;
 }
 
 export type PhoenixHistoricalRepairQueryResult =
@@ -181,12 +198,9 @@ export async function queryPhoenixForFailedToolCall(
         status: call.status,
       };
 
-      const args = buildPhoenixGetSpansArgs(
-        config.getSessionId(),
-        call.request.name,
-      );
+      const args = buildPhoenixGetSpansArgs(config.getSessionId(), call);
       const retryOptions = getPhoenixRetryOptions(process.env);
-      const phoenixQuery = getPhoenixMcpQuery(config, args, timeoutMs);
+      const phoenixQuery = getPhoenixMcpQuery(config, timeoutMs);
       if (!phoenixQuery) {
         const result: PhoenixSelfIntrospectionResult = {
           attempted: false,
@@ -205,7 +219,6 @@ export async function queryPhoenixForFailedToolCall(
       }
 
       try {
-        const controller = new AbortController();
         const toolQuery = await runInDevTraceSpan(
           {
             operation: GeminiCliOperation.ToolPhoenixMcp,
@@ -225,20 +238,26 @@ export async function queryPhoenixForFailedToolCall(
               args,
             };
 
-            const { result, attempts } = await executePhoenixQueryWithRetry(
-              () =>
-                withPhoenixMcpTimeout(
-                  phoenixQuery.execute(controller.signal),
-                  timeoutMs,
-                  () => controller.abort(),
-                ),
+            const queryResult = await executePhoenixPagedQuery(
+              (pageArgs, signal) => phoenixQuery.execute(pageArgs, signal),
+              args,
+              timeoutMs,
               retryOptions,
+              {
+                widenStartTime: getWidenedFailedToolStartTime(call),
+              },
             );
+            const { result } = queryResult;
             const diagnostics = buildPhoenixQueryDiagnostics({
               args,
               serverName: phoenixQuery.serverName,
               result,
-              attempts,
+              attempts: queryResult.attempts,
+              pages: queryResult.pages,
+              maxPages: queryResult.maxPages,
+              pageSpanCounts: queryResult.pageSpanCounts,
+              nextCursorSeen: queryResult.nextCursorSeen,
+              queryWidened: queryResult.queryWidened,
               retryOptions,
             });
 
@@ -275,23 +294,33 @@ export async function queryPhoenixForFailedToolCall(
           metadata.output = result;
           return result;
         }
-        const evidence = extractEvidence(
+        const evidenceMatch = extractEvidence(
           {
             llmContent: toolResult.llmContent,
             returnDisplay: toolResult.returnDisplay,
             data: toolResult.data,
           },
-          call.request.name,
+          {
+            call,
+            sessionId: config.getSessionId(),
+          },
         );
         const diagnostics = buildPhoenixQueryDiagnostics({
           args,
           serverName: phoenixQuery.serverName,
           result: toolResult,
           attempts: toolQuery.diagnostics.attempts,
-          matchingEvidenceCount: evidence ? 1 : 0,
+          pages: toolQuery.diagnostics.pages,
+          maxPages: toolQuery.diagnostics.maxPages,
+          pageSpanCounts: toolQuery.diagnostics.pageSpanCounts,
+          nextCursorSeen: toolQuery.diagnostics.nextCursorSeen,
+          queryWidened: toolQuery.diagnostics.queryWidened,
+          matchingEvidenceCount: evidenceMatch ? 1 : 0,
+          selectedEvidenceReason: evidenceMatch?.reason,
+          selectedSpanTimestamp: evidenceMatch?.timestamp,
           retryOptions,
         });
-        if (!evidence) {
+        if (!evidenceMatch) {
           const result: PhoenixSelfIntrospectionResult = {
             attempted: true,
             available: false,
@@ -308,7 +337,7 @@ export async function queryPhoenixForFailedToolCall(
         const result: PhoenixSelfIntrospectionResult = {
           attempted: true,
           available: true,
-          evidence,
+          evidence: evidenceMatch.evidence,
           diagnostics,
         };
         metadata.output = result;
@@ -377,7 +406,7 @@ export async function queryPhoenixForHistoricalRepairs(
 
       const args = buildPhoenixHistoricalRepairArgs(signature);
       const retryOptions = getPhoenixRetryOptions(process.env);
-      const phoenixQuery = getPhoenixMcpQuery(config, args, timeoutMs);
+      const phoenixQuery = getPhoenixMcpQuery(config, timeoutMs);
       if (!phoenixQuery) {
         const result: PhoenixHistoricalRepairQueryResult = {
           attempted: false,
@@ -397,7 +426,6 @@ export async function queryPhoenixForHistoricalRepairs(
       }
 
       try {
-        const controller = new AbortController();
         const toolQuery = await runInDevTraceSpan(
           {
             operation: GeminiCliOperation.ToolPhoenixMcp,
@@ -417,20 +445,23 @@ export async function queryPhoenixForHistoricalRepairs(
               args,
             };
 
-            const { result, attempts } = await executePhoenixQueryWithRetry(
-              () =>
-                withPhoenixMcpTimeout(
-                  phoenixQuery.execute(controller.signal),
-                  timeoutMs,
-                  () => controller.abort(),
-                ),
+            const queryResult = await executePhoenixPagedQuery(
+              (pageArgs, signal) => phoenixQuery.execute(pageArgs, signal),
+              args,
+              timeoutMs,
               retryOptions,
             );
+            const { result } = queryResult;
             const diagnostics = buildPhoenixQueryDiagnostics({
               args,
               serverName: phoenixQuery.serverName,
               result,
-              attempts,
+              attempts: queryResult.attempts,
+              pages: queryResult.pages,
+              maxPages: queryResult.maxPages,
+              pageSpanCounts: queryResult.pageSpanCounts,
+              nextCursorSeen: queryResult.nextCursorSeen,
+              queryWidened: queryResult.queryWidened,
               retryOptions,
             });
 
@@ -481,7 +512,17 @@ export async function queryPhoenixForHistoricalRepairs(
           serverName: phoenixQuery.serverName,
           result: toolResult,
           attempts: toolQuery.diagnostics.attempts,
+          pages: toolQuery.diagnostics.pages,
+          maxPages: toolQuery.diagnostics.maxPages,
+          pageSpanCounts: toolQuery.diagnostics.pageSpanCounts,
+          nextCursorSeen: toolQuery.diagnostics.nextCursorSeen,
+          queryWidened: toolQuery.diagnostics.queryWidened,
           matchingEvidenceCount: evidence.length,
+          selectedEvidenceReason: getHistoricalRepairEvidenceReason(
+            evidence[0],
+            signature,
+          ),
+          selectedSpanTimestamp: evidence[0]?.spanTimestamp,
           retryOptions,
         });
         const result: PhoenixHistoricalRepairQueryResult =
@@ -538,12 +579,14 @@ export async function queryPhoenixForHistoricalRepairs(
 
 function getPhoenixMcpQuery(
   config: Config,
-  args: Record<string, unknown>,
   timeoutMs: number,
 ):
   | {
       serverName: string;
-      execute: (signal: AbortSignal) => Promise<PhoenixMcpToolResult>;
+      execute: (
+        args: Record<string, unknown>,
+        signal: AbortSignal,
+      ) => Promise<PhoenixMcpToolResult>;
     }
   | undefined {
   const manager = config.getMcpClientManager();
@@ -553,7 +596,7 @@ function getPhoenixMcpQuery(
     if (phoenixTool) {
       return {
         serverName: clientInfo.serverName,
-        execute: (signal) => phoenixTool.buildAndExecute(args, signal),
+        execute: (args, signal) => phoenixTool.buildAndExecute(args, signal),
       };
     }
   }
@@ -565,7 +608,7 @@ function getPhoenixMcpQuery(
 
   return {
     serverName: DIRECT_PHOENIX_MCP_SERVER_NAME,
-    execute: () =>
+    execute: (args) =>
       callDirectPhoenixMcpGetSpans(args, directConfig, {
         clientName: 'tracepilot-phoenix-self-introspection',
         timeoutMs,
@@ -635,13 +678,13 @@ function normalizeToolName(value: string): string {
 
 function buildPhoenixGetSpansArgs(
   sessionId: string,
-  toolName: string,
+  call: ErroredToolCall,
 ): Record<string, unknown> {
-  const startTime = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { startTime, endTime } = getFailedToolQueryWindow(call);
   const args: Record<string, unknown> = {
     start_time: startTime,
     names:
-      toolName === SHELL_TOOL_NAME
+      call.request.name === SHELL_TOOL_NAME
         ? [GeminiCliOperation.ToolShell]
         : [
             GeminiCliOperation.ToolShell,
@@ -649,13 +692,44 @@ function buildPhoenixGetSpansArgs(
             GeminiCliOperation.ToolMcp,
             GeminiCliOperation.ToolPhoenixMcp,
           ],
-    limit: 20,
+    limit: DEFAULT_PHOENIX_MCP_PAGE_LIMIT,
     session_id: sessionId,
   };
+  if (endTime) {
+    args['end_time'] = endTime;
+  }
   if (process.env['PHOENIX_PROJECT']) {
     args['project_identifier'] = process.env['PHOENIX_PROJECT'];
   }
   return args;
+}
+
+function getFailedToolQueryWindow(call: ErroredToolCall): {
+  startTime: string;
+  endTime?: string;
+} {
+  if (call.startTime !== undefined || call.endTime !== undefined) {
+    const start = (call.startTime ?? Date.now()) - TOOL_CALL_TIME_BUFFER_MS;
+    const end = (call.endTime ?? Date.now()) + TOOL_CALL_TIME_BUFFER_MS;
+    return {
+      startTime: new Date(start).toISOString(),
+      endTime: new Date(end).toISOString(),
+    };
+  }
+  return {
+    startTime: new Date(
+      Date.now() - DEFAULT_FAILED_TOOL_LOOKBACK_MS,
+    ).toISOString(),
+  };
+}
+
+function getWidenedFailedToolStartTime(
+  call: ErroredToolCall,
+): string | undefined {
+  if (call.startTime !== undefined || call.endTime !== undefined) {
+    return undefined;
+  }
+  return new Date(Date.now() - WIDENED_FAILED_TOOL_LOOKBACK_MS).toISOString();
 }
 
 function buildPhoenixHistoricalRepairArgs(
@@ -667,7 +741,7 @@ function buildPhoenixHistoricalRepairArgs(
   const args: Record<string, unknown> = {
     start_time: startTime,
     names: [GeminiCliOperation.RepairReport],
-    limit: 20,
+    limit: DEFAULT_PHOENIX_MCP_PAGE_LIMIT,
   };
   if (process.env['PHOENIX_PROJECT']) {
     args['project_identifier'] = process.env['PHOENIX_PROJECT'];
@@ -680,6 +754,23 @@ function buildPhoenixHistoricalRepairArgs(
 interface PhoenixRetryOptions {
   maxAttempts: number;
   backoffMs: number;
+}
+
+interface PhoenixPagedQueryResult {
+  result: PhoenixMcpToolResult;
+  attempts: number;
+  pages: number;
+  maxPages: number;
+  pageSpanCounts: number[];
+  nextCursorSeen: boolean;
+  queryWidened: boolean;
+}
+
+interface FailedToolEvidenceMatch {
+  evidence: PhoenixTraceEvidence;
+  reason: string;
+  timestamp?: string;
+  score: number;
 }
 
 async function executePhoenixQueryWithRetry(
@@ -709,6 +800,105 @@ async function executePhoenixQueryWithRetry(
   throw lastError instanceof Error
     ? lastError
     : new Error('Phoenix MCP query failed');
+}
+
+async function executePhoenixPagedQuery(
+  execute: (
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<PhoenixMcpToolResult>,
+  baseArgs: Record<string, unknown>,
+  timeoutMs: number,
+  retryOptions: PhoenixRetryOptions,
+  options: {
+    maxPages?: number;
+    widenStartTime?: string;
+  } = {},
+): Promise<PhoenixPagedQueryResult> {
+  const maxPages = options.maxPages ?? DEFAULT_PHOENIX_MCP_MAX_PAGES;
+  const limit = getNumber(baseArgs, 'limit') ?? DEFAULT_PHOENIX_MCP_PAGE_LIMIT;
+  let cursor: string | undefined;
+  let attempts = 0;
+  let pages = 0;
+  let nextCursorSeen = false;
+  let queryWidened = false;
+  const pageSpanCounts: number[] = [];
+  const spansByStableKey = new Map<string, Record<string, unknown>>();
+
+  while (pages < maxPages) {
+    const pageArgs = {
+      ...baseArgs,
+      limit,
+      ...(cursor ? { cursor } : {}),
+    };
+    const controller = new AbortController();
+    const page = await executePhoenixQueryWithRetry(
+      () =>
+        withPhoenixMcpTimeout(
+          execute(pageArgs, controller.signal),
+          timeoutMs,
+          () => controller.abort(),
+        ),
+      retryOptions,
+    );
+    attempts += page.attempts;
+    const { result } = page;
+    if (result.error) {
+      return {
+        result,
+        attempts,
+        pages: pages + 1,
+        maxPages,
+        pageSpanCounts,
+        nextCursorSeen,
+        queryWidened,
+      };
+    }
+
+    const spans = getPhoenixResultSpans(result);
+    pages++;
+    pageSpanCounts.push(spans.length);
+    for (const span of spans) {
+      spansByStableKey.set(getSpanStableKey(span), span);
+    }
+
+    cursor = getPhoenixNextCursor(result);
+    if (cursor) {
+      nextCursorSeen = true;
+      continue;
+    }
+
+    const truncationPossible = spans.length >= limit;
+    if (
+      (truncationPossible || spans.length === 0) &&
+      options.widenStartTime &&
+      getString(baseArgs, 'start_time') !== options.widenStartTime &&
+      pages < maxPages
+    ) {
+      baseArgs = {
+        ...baseArgs,
+        start_time: options.widenStartTime,
+      };
+      queryWidened = true;
+      continue;
+    }
+    break;
+  }
+
+  const spans = [...spansByStableKey.values()];
+  return {
+    result: {
+      llmContent: { spans },
+      returnDisplay: '',
+      data: { spans },
+    },
+    attempts,
+    pages,
+    maxPages,
+    pageSpanCounts,
+    nextCursorSeen,
+    queryWidened,
+  };
 }
 
 function getPhoenixRetryOptions(env: NodeJS.ProcessEnv): PhoenixRetryOptions {
@@ -744,13 +934,20 @@ function buildPhoenixQueryDiagnostics(input: {
   result?: PhoenixMcpToolResult;
   reasonCode?: PhoenixQueryFailureReasonCode;
   matchingEvidenceCount?: number;
+  selectedEvidenceReason?: string;
+  selectedSpanTimestamp?: string;
   attempts?: number;
+  pages?: number;
+  maxPages?: number;
+  pageSpanCounts?: number[];
+  nextCursorSeen?: boolean;
+  queryWidened?: boolean;
   retryOptions: PhoenixRetryOptions;
 }): PhoenixQueryDiagnostics {
-  const spanCount =
+  const spans =
     input.result === undefined
       ? undefined
-      : collectSpanLikeObjects(
+      : getPhoenixResultSpans(
           JSON.parse(
             safeJsonStringify({
               llmContent: input.result.llmContent,
@@ -758,8 +955,9 @@ function buildPhoenixQueryDiagnostics(input: {
               data: input.result.data,
             }),
           ) as unknown,
-        ).length;
+        );
   const limit = getNumber(input.args, 'limit');
+  const spanCount = spans?.length;
   return {
     reasonCode: input.reasonCode,
     serverName: input.serverName,
@@ -768,38 +966,126 @@ function buildPhoenixQueryDiagnostics(input: {
     projectIdentifier: getString(input.args, 'project_identifier'),
     sessionId: getString(input.args, 'session_id'),
     startTime: getString(input.args, 'start_time'),
+    endTime: getString(input.args, 'end_time'),
     limit,
     spanCount,
+    candidateCount: spanCount,
     matchingEvidenceCount: input.matchingEvidenceCount,
     attempts: input.attempts ?? 0,
     maxAttempts: input.retryOptions.maxAttempts,
+    pages: input.pages ?? 0,
+    maxPages: input.maxPages ?? DEFAULT_PHOENIX_MCP_MAX_PAGES,
+    pageSpanCounts: input.pageSpanCounts ?? [],
     retryBackoffMs: input.retryOptions.backoffMs,
     limitTruncationPossible:
       spanCount !== undefined && limit !== undefined && spanCount >= limit,
+    nextCursorSeen: input.nextCursorSeen ?? false,
+    queryWidened: input.queryWidened ?? false,
+    selectedEvidenceReason: input.selectedEvidenceReason,
+    selectedSpanTimestamp: input.selectedSpanTimestamp,
   };
+}
+
+function getPhoenixResultSpans(
+  value: PhoenixMcpToolResult | unknown,
+): Array<Record<string, unknown>> {
+  const result = getRecord(value);
+  if (
+    result &&
+    ('llmContent' in result || 'returnDisplay' in result || 'data' in result)
+  ) {
+    return collectSpanLikeObjects({
+      llmContent: result['llmContent'],
+      returnDisplay: result['returnDisplay'],
+      data: result['data'],
+    });
+  }
+  return collectSpanLikeObjects(value);
+}
+
+function getPhoenixNextCursor(
+  result: PhoenixMcpToolResult,
+): string | undefined {
+  const raw = JSON.parse(
+    safeJsonStringify({
+      llmContent: result.llmContent,
+      returnDisplay: result.returnDisplay,
+      data: result.data,
+    }),
+  ) as unknown;
+  return (
+    findStringProperty(raw, 'nextCursor') ??
+    findStringProperty(raw, 'next_cursor')
+  );
+}
+
+function findStringProperty(value: unknown, key: string): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringProperty(item, key);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  const record = getRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const direct = getString(record, key);
+  if (direct) {
+    return direct;
+  }
+  for (const child of Object.values(record)) {
+    const found = findStringProperty(child, key);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+function getSpanStableKey(span: Record<string, unknown>): string {
+  const context = getRecord(span['context']);
+  return (
+    getString(context, 'span_id') ??
+    getString(span, 'span_id') ??
+    getString(span, 'id') ??
+    safeJsonStringify(span)
+  );
 }
 
 function extractEvidence(
   value: unknown,
-  failedToolName?: string,
-): PhoenixTraceEvidence | undefined {
+  query: {
+    call: ErroredToolCall;
+    sessionId: string;
+  },
+): FailedToolEvidenceMatch | undefined {
   const raw = JSON.parse(safeJsonStringify(value)) as unknown;
-  const span = findBestSpanLikeObject(raw, failedToolName);
-  if (!span) {
+  const best = findBestFailedToolSpan(raw, query);
+  if (!best) {
     return undefined;
   }
-  const attributes = getRecord(span?.['attributes']);
+  const { span, match } = best;
+  const attributes = getRecord(span['attributes']);
   const previewValue = getString(attributes, GEMINI_CLI_OUTPUT_PREVIEW);
   const redactedPreview = previewValue
     ? redactSensitiveText(previewValue).value
     : undefined;
 
   return {
-    spanName: getString(span, 'name'),
-    toolName: getString(attributes, GEN_AI_TOOL_NAME),
-    exitCode: getNumber(attributes, GEMINI_CLI_COMMAND_EXIT_CODE),
-    outputPreview: redactedPreview,
-    outputSha256: getString(attributes, GEMINI_CLI_OUTPUT_SHA256),
+    evidence: {
+      spanName: getString(span, 'name'),
+      toolName: getString(attributes, GEN_AI_TOOL_NAME),
+      exitCode: getNumber(attributes, GEMINI_CLI_COMMAND_EXIT_CODE),
+      outputPreview: redactedPreview,
+      outputSha256: getString(attributes, GEMINI_CLI_OUTPUT_SHA256),
+    },
+    reason: match.reason,
+    timestamp: getSpanTimestamp(span),
+    score: match.score,
   };
 }
 
@@ -815,6 +1101,13 @@ function extractHistoricalRepairEvidence(
       (item): item is PhoenixHistoricalRepairEvidence =>
         item !== undefined &&
         isRelevantHistoricalRepairEvidence(item, signature),
+    )
+    .sort(
+      (left, right) =>
+        scoreHistoricalRepairEvidence(right, signature) -
+          scoreHistoricalRepairEvidence(left, signature) ||
+        (parseEvidenceTimestamp(right) ?? 0) -
+          (parseEvidenceTimestamp(left) ?? 0),
     );
 
   const byStableKey = new Map<string, PhoenixHistoricalRepairEvidence>();
@@ -828,6 +1121,34 @@ function extractHistoricalRepairEvidence(
     byStableKey.set(key, item);
   }
   return [...byStableKey.values()].slice(0, 10);
+}
+
+function scoreHistoricalRepairEvidence(
+  evidence: PhoenixHistoricalRepairEvidence,
+  signature: TracePilotFailureSignature,
+): number {
+  let score = 0;
+  if (evidence.signatureId === signature.id) score += 80;
+  if (
+    signature.outputSha256 !== undefined &&
+    evidence.outputSha256 === signature.outputSha256
+  ) {
+    score += 70;
+  }
+  if (evidence.rootCause === signature.taxonomy) score += 25;
+  if (evidence.verificationPassed) score += 10;
+  if (hasHistoricalRepairSecondarySignal(evidence, signature)) score += 15;
+  return score;
+}
+
+function parseEvidenceTimestamp(
+  evidence: PhoenixHistoricalRepairEvidence,
+): number | undefined {
+  if (!evidence.spanTimestamp) {
+    return undefined;
+  }
+  const parsed = Date.parse(evidence.spanTimestamp);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function toHistoricalRepairEvidence(
@@ -859,6 +1180,7 @@ function toHistoricalRepairEvidence(
     outputPreview: outputPreview
       ? redactSensitiveText(outputPreview).value
       : undefined,
+    spanTimestamp: getSpanTimestamp(span),
   };
 }
 
@@ -879,6 +1201,31 @@ function isRelevantHistoricalRepairEvidence(
     return false;
   }
   return hasHistoricalRepairSecondarySignal(evidence, signature);
+}
+
+function getHistoricalRepairEvidenceReason(
+  evidence: PhoenixHistoricalRepairEvidence | undefined,
+  signature: TracePilotFailureSignature,
+): string | undefined {
+  if (!evidence) {
+    return undefined;
+  }
+  if (evidence.signatureId === signature.id) {
+    return 'signature_id';
+  }
+  if (
+    signature.outputSha256 !== undefined &&
+    evidence.outputSha256 === signature.outputSha256
+  ) {
+    return 'output_sha256';
+  }
+  if (
+    evidence.rootCause === signature.taxonomy &&
+    hasHistoricalRepairSecondarySignal(evidence, signature)
+  ) {
+    return 'root_cause+secondary_signal';
+  }
+  return 'unknown';
 }
 
 function hasHistoricalRepairSecondarySignal(
@@ -956,39 +1303,200 @@ function parseStrategy(value: string | undefined): string[] | undefined {
     .filter(Boolean);
 }
 
-function findBestSpanLikeObject(
+function findBestFailedToolSpan(
   value: unknown,
-  failedToolName?: string,
-): Record<string, unknown> | undefined {
-  const spans = collectSpanLikeObjects(value);
+  query: {
+    call: ErroredToolCall;
+    sessionId: string;
+  },
+):
+  | { span: Record<string, unknown>; match: FailedToolEvidenceMatchScore }
+  | undefined {
+  const candidates = collectSpanLikeObjects(value)
+    .map((span) => ({
+      span,
+      match: scoreFailedToolSpan(span, query),
+    }))
+    .filter((item) => item.match.accepted)
+    .sort((left, right) => {
+      const scoreDelta = right.match.score - left.match.score;
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+      return (
+        (parseSpanTimestamp(right.span) ?? 0) -
+        (parseSpanTimestamp(left.span) ?? 0)
+      );
+    });
+  return candidates[0];
+}
+
+interface FailedToolEvidenceMatchScore {
+  accepted: boolean;
+  score: number;
+  reason: string;
+}
+
+function scoreFailedToolSpan(
+  span: Record<string, unknown>,
+  query: {
+    call: ErroredToolCall;
+    sessionId: string;
+  },
+): FailedToolEvidenceMatchScore {
+  const attributes = getRecord(span['attributes']);
+  const sessionMatches = spanSessionMatches(span, query.sessionId);
+  const missingSession = getSpanSessionId(attributes) === undefined;
+  const toolMatches =
+    getString(attributes, GEN_AI_TOOL_NAME) === query.call.request.name;
+  const callIdMatches =
+    getString(attributes, GEN_AI_TOOL_CALL_ID) === query.call.request.callId;
+  const expectedExitCode = getExpectedExitCode(query.call);
+  const spanExitCode = getNumber(attributes, GEMINI_CLI_COMMAND_EXIT_CODE);
+  const failedExitCode = spanExitCode !== undefined && spanExitCode !== 0;
+  const exitCodeMatches =
+    expectedExitCode !== undefined
+      ? spanExitCode === expectedExitCode
+      : failedExitCode;
+  const expectedOutputSha256 = getExpectedOutputSha256(query.call);
+  const outputSha256Matches =
+    expectedOutputSha256 !== undefined &&
+    getString(attributes, GEMINI_CLI_OUTPUT_SHA256) === expectedOutputSha256;
+  const timestampMatches = spanTimestampMatchesCall(span, query.call);
+  const spanNameMatches = spanNameMatchesTool(span, query.call.request.name);
+
+  let score = 0;
+  if (sessionMatches) score += 30;
+  if (toolMatches) score += 25;
+  if (callIdMatches) score += 80;
+  if (outputSha256Matches) score += 70;
+  if (exitCodeMatches) score += expectedExitCode !== undefined ? 35 : 20;
+  if (timestampMatches) score += 15;
+  if (spanNameMatches) score += 10;
+
+  const accepted =
+    (callIdMatches || outputSha256Matches) &&
+    !isConflictingSession(span, query.sessionId)
+      ? true
+      : (sessionMatches || missingSession) && toolMatches && failedExitCode;
+  return {
+    accepted,
+    score,
+    reason: getFailedToolEvidenceReason({
+      callIdMatches,
+      outputSha256Matches,
+      sessionMatches,
+      toolMatches,
+      exitCodeMatches,
+      timestampMatches,
+      spanNameMatches,
+    }),
+  };
+}
+
+function getFailedToolEvidenceReason(signals: {
+  callIdMatches: boolean;
+  outputSha256Matches: boolean;
+  sessionMatches: boolean;
+  toolMatches: boolean;
+  exitCodeMatches: boolean;
+  timestampMatches: boolean;
+  spanNameMatches: boolean;
+}): string {
+  const reasons = [
+    signals.callIdMatches ? 'call_id' : undefined,
+    signals.outputSha256Matches ? 'output_sha256' : undefined,
+    signals.sessionMatches ? 'session' : undefined,
+    signals.toolMatches ? 'tool_name' : undefined,
+    signals.exitCodeMatches ? 'failed_exit_code' : undefined,
+    signals.timestampMatches ? 'timestamp' : undefined,
+    signals.spanNameMatches ? 'span_name' : undefined,
+  ].filter((item): item is string => item !== undefined);
+  return reasons.length > 0 ? reasons.join('+') : 'no_strong_match';
+}
+
+function spanSessionMatches(
+  span: Record<string, unknown>,
+  sessionId: string,
+): boolean {
+  const attributes = getRecord(span['attributes']);
+  return getSpanSessionId(attributes) === sessionId;
+}
+
+function isConflictingSession(
+  span: Record<string, unknown>,
+  sessionId: string,
+): boolean {
+  const attributes = getRecord(span['attributes']);
+  const spanSessionId = getSpanSessionId(attributes);
+  return spanSessionId !== undefined && spanSessionId !== sessionId;
+}
+
+function getSpanSessionId(
+  attributes: Record<string, unknown> | undefined,
+): string | undefined {
   return (
-    spans.find((span) => isMatchingFailedSpan(span, failedToolName)) ??
-    spans.find((span) => isMatchingToolSpan(span, failedToolName)) ??
-    spans.find(isFailedSpan) ??
-    spans[0]
+    getString(attributes, 'session.id') ??
+    getString(attributes, 'gemini_cli.session.id') ??
+    getString(attributes, GEN_AI_CONVERSATION_ID)
   );
 }
 
-function isMatchingFailedSpan(
-  span: Record<string, unknown>,
-  failedToolName: string | undefined,
-): boolean {
-  return isMatchingToolSpan(span, failedToolName) && isFailedSpan(span);
+function getExpectedExitCode(call: ErroredToolCall): number | undefined {
+  const data = getRecord(call.response.data);
+  return getNumber(data, 'exitCode') ?? getNumber(data, 'exit_code');
 }
 
-function isMatchingToolSpan(
+function getExpectedOutputSha256(call: ErroredToolCall): string | undefined {
+  const data = getRecord(call.response.data);
+  return (
+    getString(data, 'outputSha256') ??
+    getString(data, 'output_sha256') ??
+    getString(data, GEMINI_CLI_OUTPUT_SHA256)
+  );
+}
+
+function spanTimestampMatchesCall(
   span: Record<string, unknown>,
-  failedToolName: string | undefined,
+  call: ErroredToolCall,
 ): boolean {
-  if (!failedToolName) {
+  if (call.startTime === undefined && call.endTime === undefined) {
     return false;
   }
-  const attributes = getRecord(span['attributes']);
-  return getString(attributes, GEN_AI_TOOL_NAME) === failedToolName;
+  const timestamp = parseSpanTimestamp(span);
+  if (timestamp === undefined) {
+    return false;
+  }
+  const start = (call.startTime ?? timestamp) - TOOL_CALL_TIME_BUFFER_MS;
+  const end = (call.endTime ?? timestamp) + TOOL_CALL_TIME_BUFFER_MS;
+  return timestamp >= start && timestamp <= end;
 }
 
-function isFailedSpan(span: Record<string, unknown>): boolean {
-  const attributes = getRecord(span['attributes']);
-  const exitCode = getNumber(attributes, GEMINI_CLI_COMMAND_EXIT_CODE);
-  return exitCode !== undefined && exitCode !== 0;
+function spanNameMatchesTool(
+  span: Record<string, unknown>,
+  failedToolName: string,
+): boolean {
+  const spanName = getString(span, 'name');
+  if (failedToolName === SHELL_TOOL_NAME) {
+    return spanName === GeminiCliOperation.ToolShell;
+  }
+  return Boolean(spanName?.startsWith('gemini_cli.tool.'));
+}
+
+function getSpanTimestamp(span: Record<string, unknown>): string | undefined {
+  return (
+    getString(span, 'start_time') ??
+    getString(span, 'startTime') ??
+    getString(span, 'timestamp') ??
+    getString(span, 'event.timestamp')
+  );
+}
+
+function parseSpanTimestamp(span: Record<string, unknown>): number | undefined {
+  const timestamp = getSpanTimestamp(span);
+  if (!timestamp) {
+    return undefined;
+  }
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
