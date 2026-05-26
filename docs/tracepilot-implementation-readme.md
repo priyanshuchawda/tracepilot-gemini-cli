@@ -104,7 +104,10 @@ Latest strict local/Phoenix evidence:
 - Full root `npm test` is still long locally; use focused slices and CI gates.
 - Any key pasted into chat or logs should be treated as compromised and rotated
   before final public submission.
-- Keep this fork private until the final submission package is ready.
+- This repository is public. Treat TracePilot as a proof-backed repair
+  runtime/product foundation while product hardening continues; do not imply
+  production readiness for arbitrary repositories without target-environment
+  safety, redaction, and verification evidence.
 
 ### Required Environment
 

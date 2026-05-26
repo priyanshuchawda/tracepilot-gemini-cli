@@ -42,6 +42,7 @@ describe('scripts/tracepilot-ci.mjs', () => {
     delete env.PHOENIX_COLLECTOR_ENDPOINT;
     delete env.PHOENIX_HOST;
     delete env.PHOENIX_PROJECT;
+    delete env.TRACEPILOT_CI_TIER;
 
     const result = spawnSync(
       process.execPath,

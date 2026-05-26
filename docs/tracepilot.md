@@ -179,8 +179,9 @@ npm run deploy:tracepilot-cloud-run -- --project priyanshu-portfolio-458519 --re
 ```
 
 Current hosted status: not deployed. The earlier Cloud Run proof was removed to
-avoid carrying a live service before final submission. Redeploy with the command
-above and re-run the live smoke before sharing a public judging URL.
+avoid carrying a live service while the public repository is being productized.
+Redeploy with explicit approval and re-run the live smoke before sharing a
+public judging URL.
 
 If you want the hosted service to run the deterministic repair demo, redeploy
 with `--enable-demo-runs`. Keep it disabled for public judging links unless you
@@ -263,6 +264,10 @@ rotate them before final public submission.
 - TracePilot does not claim hosted demo readiness unless
   `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` passes against the
   live Cloud Run URL.
+- TracePilot is a proof-backed repair runtime/product foundation. It is not
+  automatically production-ready for arbitrary repositories without target
+  workspace policy, secret redaction, deterministic verification, and strict
+  proof gates passing.
 - The repair planner is deterministic and evidence-driven; it is not a general
   LLM judge.
 - Redaction covers the implemented sensitive patterns, but it is not a complete

@@ -4,6 +4,13 @@ TracePilot is a forked Gemini CLI TypeScript agent runtime with Phoenix
 observability, OpenInference-style spans, Phoenix MCP self-introspection, safety
 gates, redaction, deterministic evals, and a broken-repo repair demo.
 
+This public repository is being hardened from a successful proof demo into a
+developer-facing repair reliability product foundation. It is not a claim that
+TracePilot is production-ready for arbitrary repositories without the documented
+safety, redaction, and verification gates passing in that target environment.
+Productization work is tracked in
+[Epic #124](https://github.com/priyanshuchawda/tracepilot-gemini-cli/issues/124).
+
 The TypeScript monorepo now lives at the repository root so reviewers can see
 the actual project immediately: `package.json`, `packages/`, `docs/`,
 `examples/`, `scripts/`, and `.github/` are all top-level.
@@ -122,15 +129,17 @@ transcripts should be rotated before public submission.
 
 ## Current Status
 
-| Area                       | Status                           | Evidence                                                                            |
-| -------------------------- | -------------------------------- | ----------------------------------------------------------------------------------- |
-| Gemini CLI baseline        | Working                          | Build, lint, typecheck slices passed during P0 work.                                |
-| Phoenix OTEL export        | Working                          | `npm run smoke:phoenix` passed with real Phoenix config.                            |
-| Phoenix MCP visibility     | Working                          | `npm run smoke:phoenix:mcp` returned the smoke trace.                               |
-| Phoenix self-introspection | Working                          | Queries Phoenix MCP for matching failed span evidence and degrades when absent.     |
-| Broken repo repair demo    | Working                          | Strict demo exported/queryed trace evidence and passed retry tests.                 |
-| Redaction                  | Working for implemented patterns | Sanitizer, eval, and demo paths redact secrets before traces/reports.               |
-| Command safety gate        | Working                          | Blocks destructive and credential-dumping commands in policy tests.                 |
-| Cloud Run hosted URL       | Not currently deployed           | Redeploy later and run `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`. |
+| Area                       | Status                           | Evidence                                                                                           |
+| -------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Gemini CLI baseline        | Working                          | Build, lint, typecheck slices passed during P0 work.                                               |
+| Phoenix OTEL export        | Working                          | `npm run smoke:phoenix` passed with real Phoenix config.                                           |
+| Phoenix MCP visibility     | Working                          | `npm run smoke:phoenix:mcp` returned the smoke trace.                                              |
+| Phoenix self-introspection | Working                          | Queries Phoenix MCP for matching failed span evidence and degrades when absent.                    |
+| Broken repo repair demo    | Working                          | Strict demo exported/queryed trace evidence and passed retry tests.                                |
+| Redaction                  | Working for implemented patterns | Sanitizer, eval, and demo paths redact secrets before traces/reports.                              |
+| Command safety gate        | Working                          | Blocks destructive and credential-dumping commands in policy tests.                                |
+| Cloud Run hosted URL       | Not currently deployed           | Redeploy only with approval, then run `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`. |
 
-The repository is private while it is being prepared for final submission.
+The GitHub repository is public. Keep public claims tied to verified evidence:
+offline or degraded runs are not strict live proof, and hosted Cloud Run proof
+requires a freshly deployed and smoked URL.
