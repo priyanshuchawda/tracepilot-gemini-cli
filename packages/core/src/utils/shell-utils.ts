@@ -235,7 +235,7 @@ foreach ($commandAst in $commandAsts) {
   success = $true
   commands = $commandObjects
   hasRedirection = $hasRedirection
-} | ConvertTo-Json -Compress
+} | ConvertTo-Json -Compress -Depth 5
 `,
   'utf16le',
 ).toString('base64');
