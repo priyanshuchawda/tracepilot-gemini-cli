@@ -54,6 +54,10 @@ const SECRET_PATTERNS: Array<{
     replace: REDACTED,
   },
   {
+    pattern: /gh[opsru]_[0-9A-Za-z_]{20,}/g,
+    replace: REDACTED,
+  },
+  {
     pattern: /glpat-[0-9A-Za-z_-]{20,}/g,
     replace: REDACTED,
   },
