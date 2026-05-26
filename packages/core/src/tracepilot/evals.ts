@@ -5,6 +5,12 @@
  */
 
 import { redactSensitiveText } from '../telemetry/sanitize.js';
+import { z } from 'zod';
+import {
+  assertNoSecretLikeValues,
+  parseTracePilotSchema,
+  unknownRecordSchema,
+} from './runtimeValidation.js';
 
 export const REQUIRED_TRACEPILOT_EVAL_IDS = [
   'command_success',
@@ -224,15 +230,136 @@ const EVALUATIONS: Evaluation[] = [
 export function runTracePilotEvals(
   evidence: TracePilotEvalEvidence,
 ): TracePilotEvalReport {
+  const validatedEvidence = validateTracePilotEvalEvidence(evidence);
   const results = EVALUATIONS.map((evaluation) => ({
     id: evaluation.id,
-    ...evaluation.run(evidence),
+    ...evaluation.run(validatedEvidence),
   }));
-  return {
+  return validateTracePilotEvalReport({
     ok: results.every((result) => result.status === 'pass'),
     generatedAt: new Date().toISOString(),
     results,
-  };
+  });
+}
+
+const commandEvidenceSchema = z
+  .object({
+    command: z.string().optional(),
+    completed: z.boolean().optional(),
+    exitCode: z.number().int().optional(),
+    outputPreview: z.string().optional(),
+    outputSha256: z.string().optional(),
+  })
+  .strict();
+
+const testEvidenceSchema = z
+  .object({
+    command: z.string().optional(),
+    passed: z.boolean().optional(),
+    exitCode: z.number().int().optional(),
+  })
+  .strict();
+
+const safetyEvidenceSchema = z
+  .object({
+    command: z.string().optional(),
+    blocked: z.boolean().optional(),
+    observed: z.boolean().optional(),
+    level: z.string().optional(),
+    reason: z.string().optional(),
+  })
+  .strict();
+
+const redactionEvidenceSchema = z
+  .object({
+    samples: z
+      .array(
+        z
+          .object({
+            input: z.string().optional(),
+            output: z.string().optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict();
+
+const phoenixEvidenceSchema = z
+  .object({
+    spanCreated: z.boolean().optional(),
+    exported: z.boolean().optional(),
+    visible: z.boolean().optional(),
+    queryable: z.boolean().optional(),
+    project: z.string().optional(),
+    sessionId: z.string().optional(),
+    traceId: z.string().optional(),
+    spanId: z.string().optional(),
+  })
+  .strict();
+
+const selfIntrospectionEvidenceSchema = z
+  .object({
+    triggered: z.boolean().optional(),
+    queryAttempted: z.boolean().optional(),
+    evidenceAttached: z.boolean().optional(),
+    evidenceText: z.string().optional(),
+    unavailableReason: z.string().optional(),
+  })
+  .strict();
+
+const repairEvidenceSchema = z
+  .object({
+    planCreated: z.boolean().optional(),
+    referencedTraceEvidence: z.boolean().optional(),
+    fixApplied: z.boolean().optional(),
+    retryExitCode: z.number().int().optional(),
+    evalLogged: z.boolean().optional(),
+  })
+  .strict();
+
+const evalEvidenceSchema = z
+  .object({
+    command: commandEvidenceSchema.optional(),
+    test: testEvidenceSchema.optional(),
+    safety: safetyEvidenceSchema.optional(),
+    redaction: redactionEvidenceSchema.optional(),
+    phoenix: phoenixEvidenceSchema.optional(),
+    selfIntrospection: selfIntrospectionEvidenceSchema.optional(),
+    repair: repairEvidenceSchema.optional(),
+  })
+  .strict();
+
+const evalResultSchema = z
+  .object({
+    id: z.enum(REQUIRED_TRACEPILOT_EVAL_IDS),
+    status: z.enum(['pass', 'fail']),
+    deterministic: z.literal(true),
+    evidence: unknownRecordSchema,
+    failureReason: z.string().optional(),
+  })
+  .strict();
+
+const evalReportSchema = z
+  .object({
+    ok: z.boolean(),
+    generatedAt: z.string().datetime(),
+    results: z.array(evalResultSchema),
+  })
+  .strict();
+
+export function validateTracePilotEvalEvidence(
+  evidence: unknown,
+): TracePilotEvalEvidence {
+  return parseTracePilotSchema('eval evidence', evalEvidenceSchema, evidence);
+}
+
+export function validateTracePilotEvalReport(
+  report: unknown,
+): TracePilotEvalReport {
+  const parsed = parseTracePilotSchema('eval report', evalReportSchema, report);
+  assertNoSecretLikeValues('eval report', parsed);
+  return parsed;
 }
 
 function evaluateSecretRedaction(

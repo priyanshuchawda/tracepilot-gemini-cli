@@ -15,10 +15,12 @@ import {
   type TracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixEnv.js';
 import {
+  describeTracePilotProofLevel,
   isStrictTracePilotProofLevel,
   TRACEPILOT_PROOF_LEVELS,
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
+import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
 
 type GateTier = 'fast' | 'medium' | 'full';
 type GateStatus = 'passed' | 'failed' | 'skipped';
@@ -170,13 +172,14 @@ const summary = {
   tier,
   tierDescription: describeTier(tier),
   proofLevel,
+  proofSummary: describeTracePilotProofLevel(proofLevel),
   strictLiveProof: isStrictTracePilotProofLevel(proofLevel),
   generatedAt: new Date().toISOString(),
   phoenixEnv: summarizePhoenixEnv(phoenixEnv),
   gates: partitionResults(results),
   results,
 };
-await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+await writeFile(summaryPath, stableTracePilotProofReportJson(summary), 'utf8');
 console.log(
   `PROOF_LEVEL: ${summary.proofLevel} strictLiveProof=${summary.strictLiveProof}`,
 );

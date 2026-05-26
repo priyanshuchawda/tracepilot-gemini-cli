@@ -43,6 +43,7 @@ import {
   TRACEPILOT_PROOF_LEVELS,
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
+import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
 import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
 import {
   completeTracePilotRepairArtifact,
@@ -193,7 +194,7 @@ async function main(argv: string[]): Promise<number> {
   await mkdir(path.dirname(path.resolve(options.output)), { recursive: true });
   await writeFile(
     options.output,
-    `${JSON.stringify(report, null, 2)}\n`,
+    stableTracePilotProofReportJson(report),
     'utf8',
   );
   console.log(

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   REQUIRED_TRACEPILOT_EVAL_IDS,
   runTracePilotEvals,
+  validateTracePilotEvalReport,
   type TracePilotEvalEvidence,
 } from './evals.js';
 
@@ -81,6 +82,42 @@ describe('TracePilot deterministic eval runner', () => {
 
     expect(report.ok).toBe(false);
     expect(safety?.status).toBe('fail');
+  });
+
+  it('fails closed on malformed eval evidence with sanitized errors', () => {
+    expect(() =>
+      runTracePilotEvals({
+        command: {
+          completed: 'yes',
+          outputPreview: 'OPENAI_API_KEY=sk-proj-secret0000000000000000',
+        },
+      } as unknown as TracePilotEvalEvidence),
+    ).toThrow(/Invalid TracePilot eval evidence/);
+    expect(() =>
+      runTracePilotEvals({
+        command: {
+          completed: 'yes',
+          outputPreview: 'OPENAI_API_KEY=sk-proj-secret0000000000000000',
+        },
+      } as unknown as TracePilotEvalEvidence),
+    ).not.toThrow(/sk-proj-secret/);
+  });
+
+  it('rejects malformed eval reports crossing JSON boundaries', () => {
+    expect(() =>
+      validateTracePilotEvalReport({
+        ok: true,
+        generatedAt: '2026-05-26T00:00:00.000Z',
+        results: [
+          {
+            id: 'unexpected_eval',
+            status: 'pass',
+            deterministic: true,
+            evidence: {},
+          },
+        ],
+      }),
+    ).toThrow(/Invalid TracePilot eval report/);
   });
 });
 

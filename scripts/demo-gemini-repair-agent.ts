@@ -53,6 +53,7 @@ import {
   TRACEPILOT_PROOF_LEVELS,
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
+import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
 import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
 import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepilot/repairMemory.js';
 import {
@@ -253,7 +254,7 @@ async function main(argv: string[]): Promise<number> {
   await mkdir(path.dirname(path.resolve(options.output)), { recursive: true });
   await writeFile(
     options.output,
-    `${JSON.stringify(report, null, 2)}\n`,
+    stableTracePilotProofReportJson(report),
     'utf8',
   );
   printProofLines(report, options.output);
@@ -653,6 +654,8 @@ async function runGeminiAgent(
   const prompt = [
     'Repair this broken checkout webhook service.',
     'Run npm test first to observe the failure evidence.',
+    'Inspect test/checkout.test.js and address all failing assertions across config, signature, and redaction behavior.',
+    'Derive exact expected literals and signature formats from the tests instead of guessing provider conventions.',
     'When the failed tool result includes TracePilot Phoenix evidence, use it in your diagnosis.',
     'Apply the smallest safe changes under src only, then rerun npm test until it passes.',
     'Do the edits and verification; do not only explain the fix.',
@@ -662,6 +665,7 @@ async function runGeminiAgent(
     'tracepilot-gemini-home',
     sessionId,
   );
+  await rm(isolatedGeminiHome, { recursive: true, force: true });
   await mkdir(path.join(isolatedGeminiHome, '.gemini'), { recursive: true });
   await writeFile(
     path.join(isolatedGeminiHome, '.gemini', 'settings.json'),
