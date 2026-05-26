@@ -23,6 +23,7 @@ import {
   GEMINI_CLI_REPAIR_SIGNATURE_ID,
   GEMINI_CLI_REPAIR_VERIFICATION_PASSED,
   GeminiCliOperation,
+  GEN_AI_TOOL_CALL_ID,
   GEN_AI_TOOL_NAME,
 } from './constants.js';
 import {
@@ -184,7 +185,7 @@ describe('phoenix self introspection', () => {
     expect(buildAndExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         names: [GeminiCliOperation.ToolShell],
-        limit: 20,
+        limit: 100,
       }),
       expect.any(AbortSignal),
     );
@@ -309,7 +310,7 @@ describe('phoenix self introspection', () => {
       reasonCode: 'no_matching_span',
       diagnostics: expect.objectContaining({
         attemptedNames: [GeminiCliOperation.ToolShell],
-        limit: 20,
+        limit: 100,
         matchingEvidenceCount: 0,
         projectIdentifier: undefined,
         sessionId: 'session-1',
@@ -320,11 +321,11 @@ describe('phoenix self introspection', () => {
   });
 
   it('reports query diagnostics when the Phoenix limit may truncate results', async () => {
-    const spans = Array.from({ length: 20 }, (_, index) => ({
+    const spans = Array.from({ length: 100 }, (_, index) => ({
       name: 'gemini_cli.tool.shell',
       attributes: {
-        [GEN_AI_TOOL_NAME]: index === 19 ? SHELL_TOOL_NAME : 'other_tool',
-        [GEMINI_CLI_COMMAND_EXIT_CODE]: index === 19 ? 1 : 0,
+        [GEN_AI_TOOL_NAME]: index === 99 ? SHELL_TOOL_NAME : 'other_tool',
+        [GEMINI_CLI_COMMAND_EXIT_CODE]: index === 99 ? 1 : 0,
         [GEMINI_CLI_OUTPUT_SHA256]: `hash-${index}`,
       },
     }));
@@ -344,12 +345,205 @@ describe('phoenix self introspection', () => {
       available: true,
       diagnostics: expect.objectContaining({
         attemptedNames: [GeminiCliOperation.ToolShell],
-        limit: 20,
+        limit: 100,
         limitTruncationPossible: true,
         matchingEvidenceCount: 1,
-        spanCount: 20,
+        spanCount: 100,
       }),
     });
+  });
+
+  it('paginates noisy failed-tool spans and selects exact causal evidence', async () => {
+    const startedAt = Date.parse('2026-05-26T10:00:00.000Z');
+    const noise = Array.from({ length: 100 }, (_, index) => ({
+      name: 'gemini_cli.tool.shell',
+      start_time: '2026-05-26T09:50:00.000Z',
+      attributes: {
+        [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+        [GEMINI_CLI_COMMAND_EXIT_CODE]: 1,
+        [GEMINI_CLI_OUTPUT_SHA256]: `noise-${index}`,
+        'session.id': 'other-session',
+      },
+    }));
+    const buildAndExecute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        llmContent: { spans: noise, nextCursor: 'page-2' },
+        returnDisplay: '',
+      })
+      .mockResolvedValueOnce({
+        llmContent: {
+          spans: [
+            {
+              name: 'gemini_cli.tool.shell',
+              start_time: '2026-05-26T10:00:01.000Z',
+              attributes: {
+                [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+                [GEN_AI_TOOL_CALL_ID]: 'call-shell-exact',
+                [GEMINI_CLI_COMMAND_EXIT_CODE]: 2,
+                [GEMINI_CLI_OUTPUT_SHA256]: 'exact-hash',
+                'session.id': 'replay-session',
+              },
+            },
+          ],
+        },
+        returnDisplay: '',
+      });
+    const config = makePhoenixConfig(buildAndExecute);
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall({
+        callId: 'call-shell-exact',
+        data: { exitCode: 2, outputSha256: 'exact-hash' },
+        startTime: startedAt,
+        endTime: startedAt + 1000,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: {
+        exitCode: 2,
+        outputSha256: 'exact-hash',
+      },
+      diagnostics: expect.objectContaining({
+        candidateCount: 101,
+        matchingEvidenceCount: 1,
+        nextCursorSeen: true,
+        pageSpanCounts: [100, 1],
+        pages: 2,
+        selectedEvidenceReason: expect.stringContaining('call_id'),
+        selectedSpanTimestamp: '2026-05-26T10:00:01.000Z',
+      }),
+    });
+    expect(buildAndExecute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ cursor: 'page-2' }),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('rejects duplicate-session and stale failed spans without exact evidence', async () => {
+    const startedAt = Date.parse('2026-05-26T10:00:00.000Z');
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: 'gemini_cli.tool.shell',
+            start_time: '2026-05-26T09:00:00.000Z',
+            attributes: {
+              [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+              [GEN_AI_TOOL_CALL_ID]: 'call-shell',
+              [GEMINI_CLI_COMMAND_EXIT_CODE]: 2,
+              [GEMINI_CLI_OUTPUT_SHA256]: 'stale-other-session',
+              'session.id': 'other-session',
+            },
+          },
+          {
+            name: 'gemini_cli.tool.shell',
+            start_time: '2026-05-26T10:00:01.000Z',
+            attributes: {
+              [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+              [GEMINI_CLI_COMMAND_EXIT_CODE]: 0,
+              [GEMINI_CLI_OUTPUT_SHA256]: 'successful-current-session',
+              'session.id': 'replay-session',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+    const config = makePhoenixConfig(buildAndExecute);
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall({
+        callId: 'call-shell',
+        data: { exitCode: 2, outputSha256: 'missing-current-session-hash' },
+        startTime: startedAt,
+        endTime: startedAt + 1000,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: false,
+      reasonCode: 'no_matching_span',
+      diagnostics: expect.objectContaining({
+        candidateCount: 2,
+        matchingEvidenceCount: 0,
+        pages: 1,
+      }),
+    });
+  });
+
+  it('paginates historical repair memory and reports the selected reason', async () => {
+    const noisyRepairs = Array.from({ length: 100 }, (_, index) => ({
+      name: GeminiCliOperation.RepairReport,
+      attributes: {
+        [GEMINI_CLI_REPAIR_ROOT_CAUSE]: 'build_failure',
+        [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
+        'session.id': `noise-${index}`,
+      },
+    }));
+    const buildAndExecute = vi
+      .fn()
+      .mockResolvedValueOnce({
+        llmContent: { spans: noisyRepairs, nextCursor: 'repair-page-2' },
+        returnDisplay: '',
+      })
+      .mockResolvedValueOnce({
+        llmContent: {
+          spans: [
+            {
+              name: GeminiCliOperation.RepairReport,
+              start_time: '2026-05-26T10:10:00.000Z',
+              attributes: {
+                [GEMINI_CLI_REPAIR_SIGNATURE_ID]: 'tracepilot-failure-replay',
+                [GEMINI_CLI_REPAIR_ROOT_CAUSE]: 'test_assertion_failure',
+                [GEMINI_CLI_REPAIR_VERIFICATION_PASSED]: true,
+                'session.id': 'seed-session',
+              },
+            },
+          ],
+        },
+        returnDisplay: '',
+      });
+    const config = makePhoenixConfig(buildAndExecute);
+    const signature = {
+      id: 'tracepilot-failure-replay',
+      taxonomy: 'test_assertion_failure',
+      commandFamily: 'npm test',
+      diagnostics: [],
+      stackFrames: [],
+      files: [],
+      dependencies: {},
+      canonical: {},
+    } as TracePilotFailureSignature;
+
+    const result = await queryPhoenixForHistoricalRepairs(config, signature);
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: true,
+      evidence: [{ sessionId: 'seed-session', verificationPassed: true }],
+      diagnostics: expect.objectContaining({
+        candidateCount: 101,
+        matchingEvidenceCount: 1,
+        nextCursorSeen: true,
+        pageSpanCounts: [100, 1],
+        pages: 2,
+        selectedEvidenceReason: 'signature_id',
+        selectedSpanTimestamp: '2026-05-26T10:10:00.000Z',
+      }),
+    });
+    expect(buildAndExecute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ cursor: 'repair-page-2' }),
+      expect.any(AbortSignal),
+    );
   });
 
   it('retries Phoenix MCP errors with configured backoff diagnostics', async () => {
@@ -738,11 +932,18 @@ describe('phoenix self introspection', () => {
   });
 });
 
-function makeFailedShellCall(): ErroredToolCall {
+function makeFailedShellCall(
+  options: {
+    callId?: string;
+    data?: Record<string, unknown>;
+    startTime?: number;
+    endTime?: number;
+  } = {},
+): ErroredToolCall {
   return {
     status: CoreToolCallStatus.Error,
     request: {
-      callId: 'call-shell',
+      callId: options.callId ?? 'call-shell',
       name: SHELL_TOOL_NAME,
       args: { command: 'npm test' },
       isClientInitiated: false,
@@ -754,7 +955,10 @@ function makeFailedShellCall(): ErroredToolCall {
       resultDisplay: 'failed',
       error: new Error('Command failed'),
       errorType: ToolErrorType.SHELL_EXECUTE_ERROR,
+      data: options.data,
     },
+    startTime: options.startTime,
+    endTime: options.endTime,
   };
 }
 
