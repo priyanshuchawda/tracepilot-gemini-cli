@@ -25,6 +25,15 @@ describe('TracePilot CI workflow', () => {
     expect(uploadStep).toContain("          if-no-files-found: 'ignore'");
     expect(uploadStep).toContain('          retention-days: 3');
   });
+
+  it('runs the medium TracePilot gate tier in GitHub Actions', async () => {
+    const { readFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+    const workflow = readFileSync(workflowPath, 'utf8');
+
+    expect(workflow).toContain("TRACEPILOT_CI_TIER: 'medium'");
+    expect(workflow).toContain("run: 'npm run ci:tracepilot'");
+  });
 });
 
 function getStepBlock(workflow: string, stepName: string): string {
