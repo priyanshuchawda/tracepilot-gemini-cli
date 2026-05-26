@@ -117,17 +117,20 @@ describe('phoenix self introspection', () => {
   });
 
   it('queries Phoenix MCP and extracts safe failed span evidence', async () => {
+    const startedAt = Date.parse('2026-05-26T10:00:00.000Z');
     const buildAndExecute = vi.fn().mockResolvedValue({
       llmContent: {
         spans: [
           {
             name: 'gemini_cli.tool.shell',
+            start_time: '2026-05-26T10:00:01.000Z',
             attributes: {
               [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
               [GEMINI_CLI_COMMAND_EXIT_CODE]: 2,
               [GEMINI_CLI_OUTPUT_PREVIEW]:
                 'Output: failing test\nOPENAI_API_KEY=sk-proj-redactedSecret000000',
               [GEMINI_CLI_OUTPUT_SHA256]: 'abc123',
+              'session.id': 'session-1',
             },
           },
         ],
@@ -164,7 +167,10 @@ describe('phoenix self introspection', () => {
 
     const result = await queryPhoenixForFailedToolCall(
       config,
-      makeFailedShellCall(),
+      makeFailedShellCall({
+        startTime: startedAt,
+        endTime: startedAt + 1000,
+      }),
     );
 
     expect(result).toMatchObject({
@@ -253,7 +259,7 @@ describe('phoenix self introspection', () => {
 
     const result = await queryPhoenixForFailedToolCall(
       config,
-      makeFailedShellCall(),
+      makeFailedShellCall({ data: { outputSha256: 'matching-hash' } }),
     );
 
     expect(result).toMatchObject({
@@ -337,7 +343,7 @@ describe('phoenix self introspection', () => {
 
     const result = await queryPhoenixForFailedToolCall(
       config,
-      makeFailedShellCall(),
+      makeFailedShellCall({ data: { outputSha256: 'hash-99' } }),
     );
 
     expect(result).toMatchObject({
@@ -479,6 +485,47 @@ describe('phoenix self introspection', () => {
     });
   });
 
+  it('rejects generic same-session failed spans without causal evidence', async () => {
+    const startedAt = Date.parse('2026-05-26T10:00:00.000Z');
+    const buildAndExecute = vi.fn().mockResolvedValue({
+      llmContent: {
+        spans: [
+          {
+            name: 'gemini_cli.tool.shell',
+            attributes: {
+              [GEN_AI_TOOL_NAME]: SHELL_TOOL_NAME,
+              [GEMINI_CLI_COMMAND_EXIT_CODE]: 1,
+              [GEMINI_CLI_OUTPUT_PREVIEW]:
+                'AssertionError: unrelated current-session failure',
+              'session.id': 'replay-session',
+            },
+          },
+        ],
+      },
+      returnDisplay: '',
+    });
+    const config = makePhoenixConfig(buildAndExecute);
+
+    const result = await queryPhoenixForFailedToolCall(
+      config,
+      makeFailedShellCall({
+        startTime: startedAt,
+        endTime: startedAt + 1000,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      attempted: true,
+      available: false,
+      reasonCode: 'no_matching_span',
+      diagnostics: expect.objectContaining({
+        candidateCount: 1,
+        matchingEvidenceCount: 0,
+        selectedEvidenceReason: undefined,
+      }),
+    });
+  });
+
   it('paginates historical repair memory and reports the selected reason', async () => {
     const noisyRepairs = Array.from({ length: 100 }, (_, index) => ({
       name: GeminiCliOperation.RepairReport,
@@ -574,7 +621,7 @@ describe('phoenix self introspection', () => {
 
     const promise = queryPhoenixForFailedToolCall(
       config,
-      makeFailedShellCall(),
+      makeFailedShellCall({ data: { outputSha256: 'retry-hash' } }),
     );
     try {
       await vi.advanceTimersByTimeAsync(25);
@@ -824,7 +871,7 @@ describe('phoenix self introspection', () => {
 
     const result = await queryPhoenixForFailedToolCall(
       config,
-      makeFailedShellCall(),
+      makeFailedShellCall({ data: { outputSha256: 'hash123' } }),
       123456,
     );
 

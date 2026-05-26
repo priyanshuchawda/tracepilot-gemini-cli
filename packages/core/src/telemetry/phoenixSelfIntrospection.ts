@@ -1346,7 +1346,6 @@ function scoreFailedToolSpan(
 ): FailedToolEvidenceMatchScore {
   const attributes = getRecord(span['attributes']);
   const sessionMatches = spanSessionMatches(span, query.sessionId);
-  const missingSession = getSpanSessionId(attributes) === undefined;
   const toolMatches =
     getString(attributes, GEN_AI_TOOL_NAME) === query.call.request.name;
   const callIdMatches =
@@ -1375,10 +1374,10 @@ function scoreFailedToolSpan(
   if (spanNameMatches) score += 10;
 
   const accepted =
-    (callIdMatches || outputSha256Matches) &&
-    !isConflictingSession(span, query.sessionId)
-      ? true
-      : (sessionMatches || missingSession) && toolMatches && failedExitCode;
+    ((callIdMatches || outputSha256Matches) &&
+      toolMatches &&
+      !isConflictingSession(span, query.sessionId)) ||
+    (sessionMatches && toolMatches && failedExitCode && timestampMatches);
   return {
     accepted,
     score,
