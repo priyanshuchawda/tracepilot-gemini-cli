@@ -17,6 +17,7 @@ import {
   DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
   getSpanList,
   resolveDirectPhoenixMcpConfig,
+  resolveTracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import {
   describeTracePilotProofLevel,
@@ -241,11 +242,14 @@ async function waitForSeedOutcome(
 ): Promise<SeedOutcomeVisibility> {
   const directConfig = resolveDirectPhoenixMcpConfig(process.env);
   if (!directConfig) {
+    const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
     return {
       attempted: false,
       visible: false,
       simulated: false,
-      reason: 'Phoenix API key, host, or project is missing.',
+      reason:
+        phoenixEnv.mcpSkipReason ??
+        'Phoenix API key, host, or project is missing.',
     };
   }
   const client = await connectDirectPhoenixMcpClient(directConfig, {
@@ -309,13 +313,16 @@ async function queryReplayMemory(
 ): Promise<MemoryMatch> {
   const directConfig = resolveDirectPhoenixMcpConfig(process.env);
   if (!directConfig) {
+    const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
     return {
       attempted: false,
       matched: false,
       seedSessionIds: [],
       replayPlanVisible: false,
       simulated: false,
-      reason: 'Phoenix API key, host, or project is missing.',
+      reason:
+        phoenixEnv.mcpSkipReason ??
+        'Phoenix API key, host, or project is missing.',
     };
   }
   const client = await connectDirectPhoenixMcpClient(directConfig, {
