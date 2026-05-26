@@ -1,17 +1,15 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 
-name: 'PR rate limiter'
+name: 'PR rate limiter (disabled)'
 
 permissions: {}
 
 on:
-  pull_request_target:
-    types:
-      - 'opened'
-      - 'reopened'
+  workflow_dispatch:
 
 jobs:
   limit:
+    if: false
     runs-on: 'gemini-cli-ubuntu-16-core'
     permissions:
       contents: 'read'
