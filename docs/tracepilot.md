@@ -28,20 +28,32 @@ controlled Phoenix MCP upgrade.
 
 ## Local Gates
 
-The root test suite is long, so prefer focused slices while developing:
+The root test suite is long, so TracePilot uses explicit gate tiers. Local
+iteration defaults to the fast tier; GitHub Actions runs the medium tier; full
+is reserved for release confidence or broad shared-runtime changes.
 
 ```bash
 npm ci
-npm run lint
-npm run typecheck
-npm run build
-npx vitest run --coverage=false packages/core/src/telemetry/phoenixSelfIntrospection.test.ts packages/core/src/tracepilot/repairPlanner.test.ts
-npx vitest run --coverage=false packages/core/src/policy/shell-safety.test.ts packages/core/src/policy/tracepilot-command-risk.test.ts
-npm run test:scripts
+npm run ci:tracepilot
+npm run ci:tracepilot -- --tier=medium
+npm run ci:tracepilot -- --tier=full
 ```
 
 `npm run build` updates generated git commit files. Restore generated files
 before committing unless the change is intentionally part of the build output.
+
+Gate tiers:
+
+| Tier     | Required checks                                                                                        | Expected runtime | Use when                                     |
+| -------- | ------------------------------------------------------------------------------------------------------ | ---------------- | -------------------------------------------- |
+| `fast`   | `npm run test:tracepilot`                                                                              | 2-5 minutes      | Default local TracePilot iteration.          |
+| `medium` | Fast plus `npm run lint`, `npm run typecheck`, `npm run build`, `npm run demo:broken-node-app:offline` | 10-30 minutes    | Normal PR/CI confidence for TracePilot work. |
+| `full`   | Medium plus `npm test`, `npm run smoke:cloud-run:local`                                                | 30-60+ minutes   | Release confidence or broad shared changes.  |
+
+When Phoenix environment variables are present, the medium and full tiers also
+run optional `npm run smoke:phoenix` and `npm run smoke:phoenix:mcp` checks. The
+CI summary writes required, optional, and skipped gates separately to
+`.ai-logs/tracepilot-ci/summary.json`.
 
 ## Phoenix Proof
 

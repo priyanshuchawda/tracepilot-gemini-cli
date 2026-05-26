@@ -14,10 +14,12 @@ import path from 'node:path';
 const logDir = path.resolve('.ai-logs', 'tracepilot-ci');
 const summaryPath = path.join(logDir, 'summary.json');
 const verbose = process.env.TRACEPILOT_CI_VERBOSE === 'true';
+const VALID_TIERS = new Set(['fast', 'medium', 'full']);
 const PROOF_LEVELS = Object.freeze({
   LOCAL_OFFLINE: 'local_offline',
   LIVE_PHOENIX: 'live_phoenix',
 });
+const tier = resolveTier(process.argv.slice(2), process.env);
 const secretValues = [
   process.env.GEMINI_API_KEY,
   process.env.PHOENIX_API_KEY,
@@ -26,26 +28,59 @@ const secretValues = [
   process.env.PHOENIX_COLLECTOR_ENDPOINT,
 ].filter((value) => typeof value === 'string' && value.length >= 8);
 
-const requiredCommands = [
-  command('lint', 'npm', ['run', 'lint']),
-  command('typecheck', 'npm', ['run', 'typecheck']),
-  command('build', 'npm', ['run', 'build']),
-  command('tracepilot-tests', 'npm', ['run', 'test:tracepilot']),
-  command('broken-node-demo-offline', 'npm', [
-    'run',
-    'demo:broken-node-app:offline',
-  ]),
+const commandCatalog = [
+  command('tracepilot-tests', 'npm', ['run', 'test:tracepilot'], {
+    tier: 'fast',
+    expectedRuntime: '2-5m',
+  }),
+  command('lint', 'npm', ['run', 'lint'], {
+    tier: 'medium',
+    expectedRuntime: '3-8m',
+  }),
+  command('typecheck', 'npm', ['run', 'typecheck'], {
+    tier: 'medium',
+    expectedRuntime: '3-8m',
+  }),
+  command('build', 'npm', ['run', 'build'], {
+    tier: 'medium',
+    expectedRuntime: '2-6m',
+  }),
+  command(
+    'broken-node-demo-offline',
+    'npm',
+    ['run', 'demo:broken-node-app:offline'],
+    {
+      tier: 'medium',
+      expectedRuntime: '1-3m',
+    },
+  ),
+  command('root-tests', 'npm', ['test'], {
+    tier: 'full',
+    expectedRuntime: '20-40m',
+  }),
+  command('cloud-run-local-smoke', 'npm', ['run', 'smoke:cloud-run:local'], {
+    tier: 'full',
+    expectedRuntime: '1-3m',
+  }),
 ];
 
 const optionalCommands = [
   {
-    ...command('phoenix-otel-smoke', 'npm', ['run', 'smoke:phoenix']),
+    ...command('phoenix-otel-smoke', 'npm', ['run', 'smoke:phoenix'], {
+      tier: 'medium',
+      expectedRuntime: '1-3m',
+      optional: true,
+    }),
     shouldRun: hasPhoenixCollectorEnv,
     skipReason:
       'missing PHOENIX_API_KEY plus PHOENIX_COLLECTOR_ENDPOINT or PHOENIX_BASE_URL',
   },
   {
-    ...command('phoenix-mcp-smoke', 'npm', ['run', 'smoke:phoenix:mcp']),
+    ...command('phoenix-mcp-smoke', 'npm', ['run', 'smoke:phoenix:mcp'], {
+      tier: 'medium',
+      expectedRuntime: '1-5m',
+      optional: true,
+    }),
     shouldRun: hasPhoenixMcpEnv,
     skipReason:
       'missing PHOENIX_API_KEY, PHOENIX_PROJECT, or a real Phoenix host/base/collector URL',
@@ -55,31 +90,46 @@ const optionalCommands = [
 await mkdir(logDir, { recursive: true });
 
 const results = [];
-for (const item of requiredCommands) {
+const selectedRequiredCommands = commandCatalog.filter((item) =>
+  shouldIncludeTier(item.tier, tier),
+);
+const tierSkippedCommands = commandCatalog
+  .filter((item) => !shouldIncludeTier(item.tier, tier))
+  .map((item) => skippedResult(item, `requires ${item.tier} tier`));
+
+console.log(`TracePilot CI tier: ${tier} (${describeTier(tier)})`);
+
+for (const item of selectedRequiredCommands) {
   results.push(await runCommand(item));
 }
+for (const result of tierSkippedCommands) {
+  console.log(`SKIP ${result.name}: ${result.reason}`);
+}
 for (const item of optionalCommands) {
-  if (item.shouldRun()) {
+  if (!shouldIncludeTier(item.tier, tier)) {
+    const result = skippedResult(item, `requires ${item.tier} tier`);
+    results.push(result);
+    console.log(`SKIP ${item.name}: ${result.reason}`);
+  } else if (item.shouldRun()) {
     results.push(await runCommand(item));
   } else {
-    const result = {
-      name: item.name,
-      status: 'skipped',
-      reason: item.skipReason,
-      log: undefined,
-    };
+    const result = skippedResult(item, item.skipReason);
     results.push(result);
     console.log(`SKIP ${item.name}: ${item.skipReason}`);
   }
 }
+results.push(...tierSkippedCommands);
 
 const summary = {
   ok: results.every(
     (result) => result.status === 'passed' || result.status === 'skipped',
   ),
+  tier,
+  tierDescription: describeTier(tier),
   proofLevel: deriveProofLevel(results),
   strictLiveProof: deriveProofLevel(results) === PROOF_LEVELS.LIVE_PHOENIX,
   generatedAt: new Date().toISOString(),
+  gates: partitionResults(results),
   results,
 };
 await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
@@ -92,8 +142,72 @@ if (!summary.ok) {
   process.exitCode = 1;
 }
 
-function command(name, executable, args) {
-  return { name, executable, args };
+function command(name, executable, args, options) {
+  return {
+    name,
+    executable,
+    args,
+    tier: options.tier,
+    expectedRuntime: options.expectedRuntime,
+    optional: options.optional === true,
+  };
+}
+
+function resolveTier(argv, env) {
+  const cliTier = getArgValue(argv, '--tier');
+  const requested = (cliTier || env.TRACEPILOT_CI_TIER || 'fast')
+    .trim()
+    .toLowerCase();
+  if (!VALID_TIERS.has(requested)) {
+    console.error(
+      `Invalid TracePilot CI tier "${requested}". Use fast, medium, or full.`,
+    );
+    process.exit(1);
+  }
+  return requested;
+}
+
+function getArgValue(argv, name) {
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index];
+    if (arg === name) {
+      return argv[index + 1];
+    }
+    if (arg.startsWith(`${name}=`)) {
+      return arg.slice(name.length + 1);
+    }
+  }
+  return undefined;
+}
+
+function shouldIncludeTier(commandTier, selectedTier) {
+  return tierRank(commandTier) <= tierRank(selectedTier);
+}
+
+function tierRank(value) {
+  switch (value) {
+    case 'fast':
+      return 1;
+    case 'medium':
+      return 2;
+    case 'full':
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function describeTier(value) {
+  switch (value) {
+    case 'fast':
+      return 'focused TracePilot regression checks for local iteration';
+    case 'medium':
+      return 'static checks, build, focused tests, offline demo, and env-gated Phoenix smokes';
+    case 'full':
+      return 'medium gates plus long root tests and local hosted-surface smoke';
+    default:
+      return 'unknown TracePilot CI tier';
+  }
 }
 
 function deriveProofLevel(results) {
@@ -107,7 +221,9 @@ function deriveProofLevel(results) {
 
 async function runCommand(item) {
   const logPath = path.join(logDir, `${item.name}.log`);
-  console.log(`RUN ${item.name}`);
+  console.log(
+    `RUN ${item.name} [${item.tier}, expected ${item.expectedRuntime}]`,
+  );
   const result = await spawnAndCapture(item.executable, item.args);
   await writeFile(logPath, redact(result.output), 'utf8');
   if (result.exitCode === 0) {
@@ -117,6 +233,10 @@ async function runCommand(item) {
       status: 'passed',
       exitCode: result.exitCode,
       log: logPath,
+      tier: item.tier,
+      required: !item.optional,
+      optional: item.optional,
+      expectedRuntime: item.expectedRuntime,
     };
   }
 
@@ -127,6 +247,35 @@ async function runCommand(item) {
     status: 'failed',
     exitCode: result.exitCode,
     log: logPath,
+    tier: item.tier,
+    required: !item.optional,
+    optional: item.optional,
+    expectedRuntime: item.expectedRuntime,
+  };
+}
+
+function skippedResult(item, reason) {
+  return {
+    name: item.name,
+    status: 'skipped',
+    reason,
+    log: undefined,
+    tier: item.tier,
+    required: !item.optional,
+    optional: item.optional,
+    expectedRuntime: item.expectedRuntime,
+  };
+}
+
+function partitionResults(results) {
+  return {
+    required: results.filter(
+      (result) => result.required && result.status !== 'skipped',
+    ),
+    optional: results.filter(
+      (result) => result.optional && result.status !== 'skipped',
+    ),
+    skipped: results.filter((result) => result.status === 'skipped'),
   };
 }
 

@@ -89,6 +89,8 @@ npm run build
 Focused TracePilot checks:
 
 ```bash
+npm run ci:tracepilot                 # fast local tier
+npm run ci:tracepilot -- --tier=medium
 npm run smoke:phoenix
 npm run smoke:phoenix:mcp
 npm run demo:broken-node-app
@@ -96,8 +98,10 @@ npm run smoke:cloud-run:local
 ```
 
 Use focused checks during development because the full root `npm test` is long.
-Save full logs under ignored `.ai-logs/` files and share only pass/fail status,
-exit codes, and short redacted tails on failure.
+`ci:tracepilot` writes required, optional, and skipped gate results to
+`.ai-logs/tracepilot-ci/summary.json`. Save full logs under ignored `.ai-logs/`
+files and share only pass/fail status, exit codes, and short redacted tails on
+failure.
 
 ## Environment
 
