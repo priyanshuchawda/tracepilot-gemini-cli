@@ -6,9 +6,15 @@
 
 import { stableStringify } from '../policy/stable-stringify.js';
 import { redactSensitiveText } from '../telemetry/sanitize.js';
+import { z } from 'zod';
 import type { TracePilotFailureSignature } from './failureSignature.js';
 import type { TracePilotConfidenceScore } from './repairConfidence.js';
 import type { TracePilotPatchRiskAssessment } from './repairRisk.js';
+import {
+  assertNoSecretLikeValues,
+  parseTracePilotSchema,
+  unknownRecordSchema,
+} from './runtimeValidation.js';
 import {
   calculateTracePilotRegressionConfidence,
   type TracePilotVerificationResult,
@@ -103,14 +109,17 @@ export interface TracePilotCompletedRepairUpdate {
 export function createTracePilotRepairArtifact(
   artifact: TracePilotRepairArtifact,
 ): TracePilotRepairArtifact {
-  return sanitizeArtifact(artifact);
+  validateTracePilotRepairArtifactShape(artifact);
+  return validateTracePilotRepairArtifact(sanitizeArtifact(artifact));
 }
 
 export function completeTracePilotRepairArtifact(
   artifact: TracePilotRepairArtifact,
   update: TracePilotCompletedRepairUpdate,
 ): TracePilotRepairArtifact {
-  const verificationPassed = update.verificationMatrix.every(
+  const validatedArtifact = validateTracePilotRepairArtifact(artifact);
+  const validatedUpdate = validateTracePilotCompletedRepairUpdate(update);
+  const verificationPassed = validatedUpdate.verificationMatrix.every(
     (check) => !check.required || check.status === 'pass',
   );
   const phase: TracePilotRepairPhase = verificationPassed
@@ -119,35 +128,37 @@ export function completeTracePilotRepairArtifact(
       ? 'failed'
       : 'applied';
   return sanitizeArtifact({
-    ...artifact,
+    ...validatedArtifact,
     phase,
     repair: {
-      ...artifact.repair,
-      patches: update.patches,
-      filesModified: update.filesModified,
+      ...validatedArtifact.repair,
+      patches: validatedUpdate.patches,
+      filesModified: validatedUpdate.filesModified,
     },
     safety: {
-      ...artifact.safety,
+      ...validatedArtifact.safety,
       rollbackStrategy:
-        update.rollbackStrategy ?? artifact.safety.rollbackStrategy,
+        validatedUpdate.rollbackStrategy ??
+        validatedArtifact.safety.rollbackStrategy,
     },
     verification: {
-      matrix: update.verificationMatrix,
+      matrix: validatedUpdate.verificationMatrix,
       regressionConfidence: calculateTracePilotRegressionConfidence(
-        update.verificationMatrix,
+        validatedUpdate.verificationMatrix,
       ),
     },
     metrics: {
-      ...artifact.metrics,
+      ...validatedArtifact.metrics,
       repairDurationMs:
-        update.repairDurationMs ?? artifact.metrics.repairDurationMs,
-      retriesRequired: Math.max(0, update.retryMetadata.attempts - 1),
+        validatedUpdate.repairDurationMs ??
+        validatedArtifact.metrics.repairDurationMs,
+      retriesRequired: Math.max(0, validatedUpdate.retryMetadata.attempts - 1),
     },
     completion: {
-      completedAt: update.completedAt,
-      attempts: update.retryMetadata.attempts,
-      retryCommands: update.retryMetadata.retryCommands,
-      finalExitCode: update.retryMetadata.finalExitCode,
+      completedAt: validatedUpdate.completedAt,
+      attempts: validatedUpdate.retryMetadata.attempts,
+      retryCommands: validatedUpdate.retryMetadata.retryCommands,
+      finalExitCode: validatedUpdate.retryMetadata.finalExitCode,
       verificationPassed,
     },
   });
@@ -223,7 +234,206 @@ export function renderTracePilotRepairMarkdown(
 export function stableTracePilotRepairArtifactJson(
   artifact: TracePilotRepairArtifact,
 ): string {
-  return `${stableStringify(sanitizeArtifact(artifact)).replace(/\0/g, '')}\n`;
+  return `${stableStringify(validateTracePilotRepairArtifact(sanitizeArtifact(artifact))).replace(/\0/g, '')}\n`;
+}
+
+const verificationResultSchema = z
+  .object({
+    id: z.enum([
+      'failed_command',
+      'typecheck',
+      'lint',
+      'build',
+      'tests',
+      'dependency_integrity',
+      'regression_scope',
+      'patch_minimality',
+    ]),
+    command: z.string().optional(),
+    required: z.boolean(),
+    reason: z.string(),
+    status: z.enum(['pass', 'fail', 'skipped']),
+    exitCode: z.number().int().optional(),
+    outputSha256: z.string().optional(),
+  })
+  .strict();
+
+const patchSummarySchema = z
+  .object({
+    file: z.string(),
+    linesAdded: z.number().int().nonnegative(),
+    linesDeleted: z.number().int().nonnegative(),
+    description: z.string(),
+  })
+  .strict();
+
+const repairCompletionSchema = z
+  .object({
+    completedAt: z.string().optional(),
+    attempts: z.number().int().positive(),
+    retryCommands: z.array(z.string()),
+    finalExitCode: z.number().int().optional(),
+    verificationPassed: z.boolean(),
+  })
+  .strict();
+
+const repairArtifactSchema: z.ZodType<TracePilotRepairArtifact> = z
+  .object({
+    schemaVersion: z.literal(1),
+    sessionId: z.string(),
+    phase: z.enum(['planned', 'applied', 'verified', 'failed']),
+    failure: z
+      .object({
+        summary: z.string(),
+        rootCause: z.string(),
+        signature: z
+          .object({
+            id: z.string(),
+            taxonomy: z.enum([
+              'typescript_incompatibility',
+              'lint_failure',
+              'test_assertion_failure',
+              'build_failure',
+              'dependency_graph_failure',
+              'runtime_exception',
+              'unknown',
+            ]),
+            commandFamily: z.string(),
+            exitCode: z.number().int().optional(),
+            diagnostics: z.array(z.string()),
+            stackFrames: z.array(z.string()),
+            files: z.array(z.string()),
+            dependencies: z.record(z.string()),
+            outputSha256: z.string().optional(),
+            canonical: unknownRecordSchema,
+          })
+          .strict(),
+      })
+      .strict(),
+    phoenix: z
+      .object({
+        tracesConsulted: z.array(z.string()),
+        mcpQueries: z.array(
+          z
+            .object({
+              serverName: z.string(),
+              toolName: z.string(),
+              arguments: unknownRecordSchema,
+              resultCount: z.number().int().nonnegative(),
+              status: z.enum(['ok', 'error', 'skipped']),
+              reason: z.string().optional(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    repair: z
+      .object({
+        selectedStrategy: z.array(z.string()),
+        historicalMatches: z.array(
+          z
+            .object({
+              sessionId: z.string(),
+              traceId: z.string().optional(),
+              similarityScore: z.number().min(0).max(1),
+              historicalOutcomeScore: z.number().min(0).max(1),
+              matchedReasons: z.array(z.string()),
+            })
+            .strict(),
+        ),
+        patches: z.array(patchSummarySchema),
+        filesModified: z.array(z.string()),
+      })
+      .strict(),
+    safety: z
+      .object({
+        risk: z
+          .object({
+            level: z.enum(['LOW', 'MEDIUM', 'HIGH', 'BLOCKED']),
+            reasons: z.array(z.string()),
+            requiresApproval: z.boolean(),
+            rollbackRequired: z.boolean(),
+          })
+          .strict(),
+        rollbackStrategy: z.array(z.string()),
+      })
+      .strict(),
+    verification: z
+      .object({
+        matrix: z.array(verificationResultSchema),
+        regressionConfidence: z.number().min(0).max(1),
+      })
+      .strict(),
+    confidence: z
+      .object({
+        score: z.number().min(0).max(1),
+        cappedBy: z.array(z.string()),
+        components: z
+          .object({
+            similarity: z.number().min(0).max(1),
+            historicalOutcome: z.number().min(0).max(1),
+            verificationCoverage: z.number().min(0).max(1),
+            patchMinimality: z.number().min(0).max(1),
+            risk: z.number().min(0).max(1),
+          })
+          .strict(),
+      })
+      .strict(),
+    metrics: z
+      .object({
+        repairDurationMs: z.number().nonnegative(),
+        retriesRequired: z.number().int().nonnegative(),
+        unsafeCommandsBlocked: z.number().int().nonnegative(),
+      })
+      .strict(),
+    completion: repairCompletionSchema.optional(),
+  })
+  .strict();
+
+const completionUpdateSchema: z.ZodType<TracePilotCompletedRepairUpdate> = z
+  .object({
+    filesModified: z.array(z.string()),
+    patches: z.array(patchSummarySchema),
+    verificationMatrix: z.array(verificationResultSchema),
+    retryMetadata: z
+      .object({
+        attempts: z.number().int().positive(),
+        retryCommands: z.array(z.string()),
+        finalExitCode: z.number().int().optional(),
+      })
+      .strict(),
+    repairDurationMs: z.number().nonnegative().optional(),
+    completedAt: z.string().optional(),
+    rollbackStrategy: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export function validateTracePilotRepairArtifact(
+  artifact: unknown,
+): TracePilotRepairArtifact {
+  const parsed = validateTracePilotRepairArtifactShape(artifact);
+  assertNoSecretLikeValues('repair artifact', parsed);
+  return parsed;
+}
+
+function validateTracePilotRepairArtifactShape(
+  artifact: unknown,
+): TracePilotRepairArtifact {
+  return parseTracePilotSchema(
+    'repair artifact',
+    repairArtifactSchema,
+    artifact,
+  );
+}
+
+export function validateTracePilotCompletedRepairUpdate(
+  update: unknown,
+): TracePilotCompletedRepairUpdate {
+  return parseTracePilotSchema(
+    'completion update',
+    completionUpdateSchema,
+    update,
+  );
 }
 
 function sanitizeArtifact(

@@ -25,6 +25,7 @@ import {
   TRACEPILOT_PROOF_LEVELS,
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
+import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
 
 const execFileAsync = promisify(execFile);
 const PHOENIX_MCP_QUERY_TIMEOUT_MS = DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS;
@@ -134,7 +135,7 @@ async function main(argv: string[]): Promise<number> {
   await mkdir(path.dirname(path.resolve(options.output)), { recursive: true });
   await writeFile(
     path.resolve(options.output),
-    `${JSON.stringify(report, null, 2)}\n`,
+    stableTracePilotProofReportJson(report),
     'utf8',
   );
   printProofLines(report, options.output);

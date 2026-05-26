@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -80,5 +80,36 @@ describe('scripts/tracepilot-evals.ts', () => {
     expect(report.ok).toBe(true);
     expect(report.results).toHaveLength(7);
     expect(JSON.stringify(report)).not.toContain('sk-proj-secret');
+  }, 30000);
+
+  it('fails closed on malformed JSON input', async () => {
+    const { existsSync, mkdtempSync, writeFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-evals-bad-json-'));
+    const input = path.join(dir, 'evidence.json');
+    const output = path.join(dir, 'result.json');
+    writeFileSync(input, '{"command":');
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        'scripts/tracepilot-evals.ts',
+        '--input',
+        input,
+        '--output',
+        output,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Failed to read TracePilot eval evidence');
+    expect(existsSync(output)).toBe(false);
   }, 30000);
 });

@@ -12,6 +12,8 @@ import {
   createTracePilotRepairArtifact,
   renderTracePilotRepairMarkdown,
   stableTracePilotRepairArtifactJson,
+  validateTracePilotCompletedRepairUpdate,
+  validateTracePilotRepairArtifact,
 } from './repairReport.js';
 import { classifyTracePilotPatchRisk } from './repairRisk.js';
 import type { TracePilotVerificationResult } from './verificationMatrix.js';
@@ -89,6 +91,43 @@ describe('TracePilot repair reports', () => {
     expect(markdown).toContain('src/config.js');
     expect(markdown).toContain('verification_passed=true');
     expect(json).not.toContain('sk-proj-secret');
+  });
+
+  it('rejects malformed repair artifacts with sanitized diagnostics', () => {
+    const malformed = {
+      ...makePlannedArtifact(),
+      phase: 'done',
+      failure: {
+        summary: 'OPENAI_API_KEY=sk-proj-secret0000000000000000',
+      },
+    };
+
+    expect(() => validateTracePilotRepairArtifact(malformed)).toThrow(
+      /Invalid TracePilot repair artifact/,
+    );
+    expect(() => validateTracePilotRepairArtifact(malformed)).not.toThrow(
+      /sk-proj-secret/,
+    );
+  });
+
+  it('rejects malformed completion updates before applying them', () => {
+    expect(() =>
+      validateTracePilotCompletedRepairUpdate({
+        filesModified: ['src/config.js'],
+        patches: [],
+        verificationMatrix: [
+          {
+            id: 'retry',
+            required: true,
+            reason: 'missing status should fail closed',
+          },
+        ],
+        retryMetadata: {
+          attempts: 0,
+          retryCommands: ['npm test'],
+        },
+      }),
+    ).toThrow(/Invalid TracePilot completion update/);
   });
 });
 
