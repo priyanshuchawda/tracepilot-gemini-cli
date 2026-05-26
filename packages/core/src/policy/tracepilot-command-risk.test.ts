@@ -44,4 +44,53 @@ describe('TracePilot command risk model', () => {
   ] as const)('classifies %s as %s', (command, expected) => {
     expect(classifyTracePilotCommandRisk(command).level).toBe(expected);
   });
+
+  it.each([
+    ['cat .env', 'credential_exposure'],
+    ['npm test && cat .env', 'credential_exposure'],
+    ['powershell -Command "Get-Content .env"', 'credential_exposure'],
+    ['cmd /c type .env', 'credential_exposure'],
+    ['npm exec -- cat .env', 'credential_exposure'],
+    ['npx --yes sh -c "cat .env"', 'credential_exposure'],
+    ['node -e "console.log(process.env)"', 'credential_exposure'],
+    ['cat package.json > .env', 'credential_exposure'],
+    ['rm -rf /', 'protected_recursive_delete'],
+    [
+      'pwsh -Command "Remove-Item -Recurse -Force $HOME"',
+      'protected_recursive_delete',
+    ],
+    ['git push origin main', 'remote_mutation'],
+    ['powershell -EncodedCommand SQBFAFgA', 'encoded_command'],
+    ['npm run deploy', 'deployment_mutation'],
+    ['chmod -R 777 .', 'permission_mutation'],
+    ['rm -rf ./dist', 'local_recursive_delete'],
+    ['npm test', 'read_only_or_verification'],
+    ['npm ci', 'local_mutation_or_script'],
+    ['npx vitest', 'read_only_or_verification'],
+  ] as const)('returns stable reason code for %s', (command, reasonCode) => {
+    expect(classifyTracePilotCommandRisk(command).reasonCode).toBe(reasonCode);
+  });
+
+  it.each([
+    'npm test && cat .env',
+    'cmd /c type .env',
+    'powershell -Command "Get-Content .env"',
+    'npm exec -- cat .env',
+    'npx --yes sh -c "cat .env"',
+  ])('reports parsed command details for %s', (command) => {
+    const result = classifyTracePilotCommandRisk(command);
+    expect(result.parsedCommands?.length).toBeGreaterThan(1);
+    expect(
+      result.parsedCommands
+        ?.map((detail) => detail.commandName)
+        .some((name) => ['cat', 'type', 'get-content'].includes(name)),
+    ).toBe(true);
+  });
+
+  it('fails closed with a stable code for syntactically uncertain shell input', () => {
+    const result = classifyTracePilotCommandRisk('git log &&& npm test');
+
+    expect(result.level).toBe('high');
+    expect(result.reasonCode).toBe('parse_error');
+  });
 });
