@@ -81,6 +81,11 @@ describe('scripts/tracepilot-ci.mjs', () => {
       tier: 'fast',
       proofLevel: 'local_offline',
       strictLiveProof: false,
+      phoenixEnv: {
+        collectorReady: false,
+        mcpReady: false,
+        normalizedHostPresent: false,
+      },
       gates: {
         required: [
           {
@@ -140,6 +145,11 @@ describe('scripts/tracepilot-ci.mjs', () => {
       ),
     );
     expect(summary.tier).toBe('medium');
+    expect(summary.phoenixEnv).toMatchObject({
+      collectorReady: false,
+      mcpReady: false,
+      normalizedHostPresent: false,
+    });
     expect(
       summary.gates.required.map((item: { name: string }) => item.name),
     ).toEqual([

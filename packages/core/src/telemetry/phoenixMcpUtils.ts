@@ -6,6 +6,17 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import {
+  resolvePhoenixHostFromEnv,
+  resolveTracePilotPhoenixEnv,
+} from './phoenixEnv.js';
+
+export {
+  PHOENIX_COLLECTOR_ENV_MISSING_REASON,
+  PHOENIX_MCP_ENV_MISSING_REASON,
+  normalizePhoenixUrl,
+  resolveTracePilotPhoenixEnv,
+} from './phoenixEnv.js';
 
 export const PHOENIX_MCP_TOOL_NAME = 'get-spans';
 export const DEFAULT_PHOENIX_MCP_PACKAGE = '@arizeai/phoenix-mcp@4.0.13';
@@ -38,49 +49,21 @@ export interface DirectPhoenixMcpClient {
 export function resolveDirectPhoenixMcpConfig(
   env: NodeJS.ProcessEnv,
 ): DirectPhoenixMcpConfig | undefined {
-  const apiKey = env['PHOENIX_API_KEY']?.trim();
-  const project = env['PHOENIX_PROJECT']?.trim();
-  const host = resolvePhoenixMcpHost(env);
-  if (!apiKey || !project || !host) {
+  const phoenixEnv = resolveTracePilotPhoenixEnv(env);
+  if (!phoenixEnv.apiKey || !phoenixEnv.project || !phoenixEnv.normalizedHost) {
     return undefined;
   }
-  return { apiKey, project, host };
+  return {
+    apiKey: phoenixEnv.apiKey,
+    project: phoenixEnv.project,
+    host: phoenixEnv.normalizedHost,
+  };
 }
 
 export function resolvePhoenixMcpHost(
   env: NodeJS.ProcessEnv,
 ): string | undefined {
-  return [
-    env['PHOENIX_HOST'],
-    env['PHOENIX_BASE_URL'],
-    env['PHOENIX_COLLECTOR_ENDPOINT'],
-  ]
-    .map(normalizePhoenixUrl)
-    .find((value): value is string => value !== undefined);
-}
-
-export function normalizePhoenixUrl(
-  value: string | undefined,
-): string | undefined {
-  const trimmed = String(value ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!trimmed || /YOUR_|your-|example/i.test(trimmed)) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(trimmed);
-    url.search = '';
-    url.hash = '';
-    url.pathname = url.pathname
-      .replace(/\/+$/, '')
-      .replace(/\/v1\/traces$/i, '')
-      .replace(/\/v1$/i, '');
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return undefined;
-  }
+  return resolvePhoenixHostFromEnv(env);
 }
 
 export function resolvePhoenixMcpPackage(env: NodeJS.ProcessEnv): string {

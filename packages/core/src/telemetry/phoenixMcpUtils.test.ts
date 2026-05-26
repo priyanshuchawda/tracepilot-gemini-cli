@@ -12,6 +12,7 @@ import {
   normalizePhoenixUrl,
   parseJsonText,
   resolveDirectPhoenixMcpConfig,
+  resolveTracePilotPhoenixEnv,
   resolvePhoenixMcpPackage,
   withPhoenixMcpTimeout,
 } from './phoenixMcpUtils.js';
@@ -50,8 +51,78 @@ describe('phoenix MCP utilities', () => {
     expect(normalizePhoenixUrl('https://app.phoenix.arize.com/s/demo/v1')).toBe(
       'https://app.phoenix.arize.com/s/demo',
     );
+    expect(normalizePhoenixUrl('https://app.phoenix.arize.com/s/demo///')).toBe(
+      'https://app.phoenix.arize.com/s/demo',
+    );
     expect(normalizePhoenixUrl('YOUR_PHOENIX_HOST')).toBeUndefined();
+    expect(
+      normalizePhoenixUrl('https://app.phoenix.arize.com/s/YOUR_SPACE'),
+    ).toBeUndefined();
+    expect(normalizePhoenixUrl('https://example.com/s/demo')).toBeUndefined();
     expect(normalizePhoenixUrl('not a url')).toBeUndefined();
+  });
+
+  it('resolves Phoenix env readiness consistently for collector and MCP use', () => {
+    expect(
+      resolveTracePilotPhoenixEnv({
+        PHOENIX_API_KEY: 'phx_key',
+        PHOENIX_PROJECT: 'tracepilot',
+        PHOENIX_HOST: 'https://app.phoenix.arize.com/s/host-space/',
+        PHOENIX_BASE_URL: 'https://app.phoenix.arize.com/s/base-space',
+        PHOENIX_COLLECTOR_ENDPOINT:
+          'https://app.phoenix.arize.com/s/collector-space/v1/traces',
+      }),
+    ).toMatchObject({
+      collectorReady: true,
+      mcpReady: true,
+      normalizedHost: 'https://app.phoenix.arize.com/s/host-space',
+    });
+
+    expect(
+      resolveTracePilotPhoenixEnv({
+        PHOENIX_API_KEY: 'phx_key',
+        PHOENIX_PROJECT: 'tracepilot',
+        PHOENIX_BASE_URL: 'https://app.phoenix.arize.com/s/base-space/',
+      }),
+    ).toMatchObject({
+      collectorReady: true,
+      mcpReady: true,
+      normalizedHost: 'https://app.phoenix.arize.com/s/base-space',
+    });
+
+    expect(
+      resolveTracePilotPhoenixEnv({
+        PHOENIX_API_KEY: 'phx_key',
+        PHOENIX_PROJECT: 'tracepilot',
+        PHOENIX_COLLECTOR_ENDPOINT:
+          'https://app.phoenix.arize.com/s/collector-space/v1/traces',
+      }),
+    ).toMatchObject({
+      collectorReady: true,
+      mcpReady: true,
+      normalizedHost: 'https://app.phoenix.arize.com/s/collector-space',
+    });
+
+    expect(resolveTracePilotPhoenixEnv({})).toMatchObject({
+      collectorReady: false,
+      mcpReady: false,
+      collectorSkipReason:
+        'missing PHOENIX_API_KEY plus PHOENIX_COLLECTOR_ENDPOINT or PHOENIX_BASE_URL',
+      mcpSkipReason:
+        'missing PHOENIX_API_KEY, PHOENIX_PROJECT, or a real Phoenix host/base/collector URL',
+    });
+
+    expect(
+      resolveTracePilotPhoenixEnv({
+        PHOENIX_API_KEY: 'phx_key',
+        PHOENIX_PROJECT: 'tracepilot',
+        PHOENIX_BASE_URL: 'https://app.phoenix.arize.com/s/YOUR_SPACE',
+      }),
+    ).toMatchObject({
+      collectorReady: true,
+      mcpReady: false,
+      normalizedHost: undefined,
+    });
   });
 
   it('resolves direct config and package overrides from env', () => {

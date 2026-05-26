@@ -39,6 +39,7 @@ import {
   DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
   getSpanList,
   resolveDirectPhoenixMcpConfig,
+  resolveTracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
 import {
@@ -460,10 +461,13 @@ async function recordVerifiedRepairOutcome(input: {
   }
   const provider = registerPhoenixProvider();
   if (!provider) {
+    const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
     return {
       attempted: false,
       recorded: false,
-      reason: 'Phoenix exporter env is missing for verified outcome recording.',
+      reason:
+        phoenixEnv.mcpSkipReason ??
+        'Phoenix exporter env is missing for verified outcome recording.',
     };
   }
   const initialOutput = createRedactedOutputPreview(
@@ -547,11 +551,10 @@ function buildCausalTrace(input: {
 }
 
 function registerPhoenixProvider(): NodeTracerProvider | undefined {
-  const apiKey = process.env['PHOENIX_API_KEY']?.trim();
-  const project = process.env['PHOENIX_PROJECT']?.trim();
-  const url =
-    process.env['PHOENIX_COLLECTOR_ENDPOINT']?.trim() ??
-    process.env['PHOENIX_BASE_URL']?.trim();
+  const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
+  const apiKey = phoenixEnv.apiKey;
+  const project = phoenixEnv.project;
+  const url = phoenixEnv.collectorEndpoint ?? phoenixEnv.baseUrl;
   if (!apiKey || !project || !url) {
     return undefined;
   }
@@ -789,7 +792,11 @@ async function queryPhoenixSession(
 ): Promise<PhoenixSessionEvidence> {
   const directConfig = resolveDirectPhoenixMcpConfig(process.env);
   if (!directConfig) {
-    return degradedPhoenix('Phoenix API key, host, or project is missing.');
+    const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
+    return degradedPhoenix(
+      phoenixEnv.mcpSkipReason ??
+        'Phoenix API key, host, or project is missing.',
+    );
   }
   const client = await connectDirectPhoenixMcpClient(directConfig, {
     clientName: 'tracepilot-gemini-repair-demo',

@@ -76,7 +76,7 @@
     "smoke:cloud-run": "node scripts/tracepilot-cloud-run-smoke.mjs",
     "smoke:cloud-run:local": "node scripts/tracepilot-cloud-run-smoke.mjs",
     "test:tracepilot": "vitest run --coverage=false packages/core/src/telemetry/phoenixSelfIntrospection.test.ts packages/core/src/tracepilot/repairPlanner.test.ts packages/core/src/tracepilot/evals.test.ts packages/core/src/policy/tracepilot-command-risk.test.ts packages/core/src/policy/shell-safety.test.ts && npm run test:scripts",
-    "ci:tracepilot": "node scripts/tracepilot-ci.mjs",
+    "ci:tracepilot": "tsx scripts/tracepilot-ci.ts",
     "tracepilot:check": "tsx scripts/tracepilot-check-folder.ts",
     "eval:tracepilot": "tsx scripts/tracepilot-evals.ts",
     "demo:broken-node-app": "tsx scripts/demo-broken-node-app.ts",

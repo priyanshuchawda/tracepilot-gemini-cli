@@ -29,6 +29,7 @@ import {
   DEFAULT_PHOENIX_MCP_QUERY_TIMEOUT_MS,
   getSpanList,
   resolveDirectPhoenixMcpConfig,
+  resolveTracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
 import {
@@ -391,6 +392,7 @@ async function recordFailureAndQueryPhoenix(
 ): Promise<PhoenixQueryEvidence> {
   const provider = registerPhoenixProvider();
   if (!provider) {
+    const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
     return {
       attempted: false,
       spanCreated: false,
@@ -398,7 +400,8 @@ async function recordFailureAndQueryPhoenix(
       visible: false,
       queryable: false,
       reason:
-        'Missing Phoenix env. Set PHOENIX_API_KEY, PHOENIX_PROJECT, and PHOENIX_HOST, PHOENIX_BASE_URL, or a Phoenix Cloud PHOENIX_COLLECTOR_ENDPOINT.',
+        phoenixEnv.mcpSkipReason ??
+        'Missing Phoenix env for live TracePilot proof.',
     };
   }
 
@@ -453,11 +456,10 @@ async function recordFailureAndQueryPhoenix(
 }
 
 function registerPhoenixProvider(): NodeTracerProvider | undefined {
-  const apiKey = process.env['PHOENIX_API_KEY'];
-  const project = process.env['PHOENIX_PROJECT'];
-  const url =
-    process.env['PHOENIX_COLLECTOR_ENDPOINT'] ??
-    process.env['PHOENIX_BASE_URL'];
+  const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
+  const apiKey = phoenixEnv.apiKey;
+  const project = phoenixEnv.project;
+  const url = phoenixEnv.collectorEndpoint ?? phoenixEnv.baseUrl;
   if (!apiKey || !project || !url) {
     return undefined;
   }
@@ -475,11 +477,14 @@ async function queryPhoenixMcp(
 ): Promise<Omit<PhoenixQueryEvidence, 'spanCreated' | 'exported'>> {
   const directConfig = resolveDirectPhoenixMcpConfig(process.env);
   if (!directConfig) {
+    const phoenixEnv = resolveTracePilotPhoenixEnv(process.env);
     return {
       attempted: false,
       visible: false,
       queryable: false,
-      reason: 'Phoenix MCP API key, host, or project env missing.',
+      reason:
+        phoenixEnv.mcpSkipReason ??
+        'Phoenix MCP API key, host, or project env missing.',
     };
   }
   const client = await connectDirectPhoenixMcpClient(directConfig, {
