@@ -22,6 +22,114 @@ import {
   redactSensitiveText,
 } from './sanitize.js';
 
+const REDACTION_CORPUS = [
+  {
+    name: 'gemini api key',
+    input: 'GEMINI_API_KEY=AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMY12',
+    forbidden: ['AIzaSyDUMMY'],
+  },
+  {
+    name: 'openai project key',
+    input: 'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
+    forbidden: ['sk-proj-dummy'],
+  },
+  {
+    name: 'github classic token',
+    input: 'GITHUB_TOKEN=ghp_dummyDummyDummyDummyDummyDummyDummy12',
+    forbidden: ['ghp_dummy'],
+  },
+  {
+    name: 'github oauth token',
+    input: 'gho_dummyDummyDummyDummyDummyDummyDummy12',
+    forbidden: ['gho_dummy'],
+  },
+  {
+    name: 'github user token',
+    input: 'ghu_dummyDummyDummyDummyDummyDummyDummy12',
+    forbidden: ['ghu_dummy'],
+  },
+  {
+    name: 'github server token',
+    input: 'ghs_dummyDummyDummyDummyDummyDummyDummy12',
+    forbidden: ['ghs_dummy'],
+  },
+  {
+    name: 'github refresh token',
+    input: 'ghr_dummyDummyDummyDummyDummyDummyDummy12',
+    forbidden: ['ghr_dummy'],
+  },
+  {
+    name: 'github fine grained token',
+    input: 'github_pat_dummyDummyDummyDummyDummyDummyDummy12',
+    forbidden: ['github_pat_dummy'],
+  },
+  {
+    name: 'gitlab token',
+    input: 'GITLAB_TOKEN=glpat-1234567890abcdefghijkl',
+    forbidden: ['glpat-1234567890'],
+  },
+  {
+    name: 'slack token',
+    input: [
+      'SLACK_BOT_TOKEN=xoxb',
+      '123456789012',
+      '123456789012',
+      'abcdefghijklmnop',
+    ].join('-'),
+    forbidden: ['xoxb-123456789012'],
+  },
+  {
+    name: 'aws access key',
+    input: 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
+    forbidden: ['AKIAIOSFODNN7EXAMPLE'],
+  },
+  {
+    name: 'aws secret key',
+    input: 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    forbidden: ['wJalrXUtnFEMI'],
+  },
+  {
+    name: 'jwt',
+    input:
+      'JWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
+    forbidden: ['eyJhbGciOiJIUzI1NiI'],
+  },
+  {
+    name: 'authorization header',
+    input: 'Authorization: Bearer abc.def.ghi',
+    forbidden: ['abc.def.ghi'],
+  },
+  {
+    name: 'database url env',
+    input: 'DATABASE_URL=postgres://user:pass@example.com/db',
+    forbidden: ['postgres://user:pass', 'pass@example.com'],
+  },
+  {
+    name: 'redis url credential',
+    input: 'REDIS_URL=redis://default:redis-password@example.com:6379/0',
+    forbidden: ['redis-password'],
+  },
+  {
+    name: 'inline url credential',
+    input: 'fetch https://service-user:service-pass@example.com/api',
+    forbidden: ['service-user:service-pass'],
+  },
+  {
+    name: 'quoted client secret',
+    input: 'client_secret: "quoted-secret-value"',
+    forbidden: ['quoted-secret-value'],
+  },
+  {
+    name: 'private key block',
+    input: [
+      '-----BEGIN PRIVATE KEY-----',
+      'private-key-material',
+      '-----END PRIVATE KEY-----',
+    ].join('\n'),
+    forbidden: ['private-key-material'],
+  },
+];
+
 /**
  * Create a mock config for testing.
  *
@@ -44,52 +152,36 @@ function createMockConfig(logPromptsEnabled: boolean): Config {
 describe('Telemetry Sanitization', () => {
   describe('redactSensitiveText', () => {
     it('redacts common secret patterns before telemetry export', () => {
-      const slackFixture = [
-        'xoxb',
-        '123456789012',
-        '123456789012',
-        'abcdefghijklmnop',
-      ].join('-');
       const sensitive = [
-        'GEMINI_API_KEY=AIzaSyDUMMYDUMMYDUMMYDUMMYDUMMY12',
-        'OPENAI_API_KEY=sk-proj-dummyDummyDummyDummyDummyDummy',
-        'GITHUB_TOKEN=ghp_dummyDummyDummyDummyDummyDummyDummy12',
-        'Authorization: Bearer abc.def.ghi',
+        ...REDACTION_CORPUS.map((item) => item.input),
         'password="super-secret"',
         'api_key: plain-secret',
-        'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE',
-        'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
-        'GITLAB_TOKEN=glpat-1234567890abcdefghijkl',
-        `SLACK_BOT_TOKEN=${slackFixture}`,
-        'JWT=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
-        'REDIS_URL=redis://default:redis-password@example.com:6379/0',
-        'DATABASE_URL=postgres://user:pass@example.com/db',
-        [
-          '-----BEGIN PRIVATE KEY-----',
-          'private-key-material',
-          '-----END PRIVATE KEY-----',
-        ].join('\n'),
       ].join('\n');
 
       const result = redactSensitiveText(sensitive);
 
       expect(result.redacted).toBe(true);
-      expect(result.value).not.toContain('AIzaSyDUMMY');
-      expect(result.value).not.toContain('sk-proj-dummy');
-      expect(result.value).not.toContain('ghp_dummy');
-      expect(result.value).not.toContain('abc.def.ghi');
+      for (const item of REDACTION_CORPUS) {
+        for (const forbidden of item.forbidden) {
+          expect(result.value).not.toContain(forbidden);
+        }
+      }
       expect(result.value).not.toContain('super-secret');
       expect(result.value).not.toContain('plain-secret');
-      expect(result.value).not.toContain('AKIAIOSFODNN7EXAMPLE');
-      expect(result.value).not.toContain('wJalrXUtnFEMI');
-      expect(result.value).not.toContain('glpat-1234567890');
-      expect(result.value).not.toContain(slackFixture);
-      expect(result.value).not.toContain('eyJhbGciOiJIUzI1NiI');
-      expect(result.value).not.toContain('redis-password');
-      expect(result.value).not.toContain('postgres://user:pass');
-      expect(result.value).not.toContain('private-key-material');
       expect(result.value).toContain('[REDACTED]');
     });
+
+    it.each(REDACTION_CORPUS)(
+      'redacts corpus fixture: $name',
+      ({ input, forbidden }) => {
+        const result = redactSensitiveText(input);
+
+        expect(result.redacted).toBe(true);
+        for (const value of forbidden) {
+          expect(result.value).not.toContain(value);
+        }
+      },
+    );
 
     it('leaves non-sensitive text unchanged', () => {
       const text = 'tests failed with exit code 1';
@@ -156,6 +248,24 @@ describe('Telemetry Sanitization', () => {
       );
 
       expect(first.sha256).toBe(second.sha256);
+    });
+
+    it('keeps corpus secrets out of previews and redacted fingerprints', () => {
+      const output = REDACTION_CORPUS.map((item) => item.input).join('\n');
+      const preview = createRedactedOutputPreview(output);
+
+      expect(preview.redacted).toBe(true);
+      expect(preview.fingerprintVersion).toBe('redacted-sha256-v1');
+      expect(preview.sha256).toBe(
+        createHash('sha256')
+          .update(redactSensitiveText(output).value)
+          .digest('hex'),
+      );
+      for (const item of REDACTION_CORPUS) {
+        for (const forbidden of item.forbidden) {
+          expect(preview.preview).not.toContain(forbidden);
+        }
+      }
     });
   });
 
