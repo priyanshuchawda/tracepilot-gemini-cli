@@ -44,6 +44,8 @@ export interface TracePilotCommandRisk {
   parsedCommands?: TracePilotParsedCommand[];
 }
 
+type TracePilotCommandParser = typeof parseCommandDetails;
+
 interface CommandSegment {
   raw: string;
   tokens: string[];
@@ -67,11 +69,18 @@ const RISK_ORDER: Record<TracePilotCommandRiskLevel, number> = {
 export function classifyTracePilotCommandRisk(
   command: string | undefined,
 ): TracePilotCommandRisk {
+  return classifyTracePilotCommandRiskWithParser(command, parseCommandDetails);
+}
+
+export function classifyTracePilotCommandRiskWithParser(
+  command: string | undefined,
+  parser: TracePilotCommandParser,
+): TracePilotCommandRisk {
   if (!command?.trim()) {
     return risk('unknown', 'empty_command');
   }
 
-  const parsed = parseCommandSegments(command);
+  const parsed = parseCommandSegments(command, parser);
   if (parsed.parserFailed) {
     const fallbackBlocked = parsed.segments
       .map(classifyCommandSegment)
@@ -162,15 +171,24 @@ function withParsedCommands(
   };
 }
 
-function parseCommandSegments(command: string): ParsedSegments {
+function parseCommandSegments(
+  command: string,
+  parser: TracePilotCommandParser,
+): ParsedSegments {
   let parsed: ReturnType<typeof parseCommandDetails> | null = null;
+  let parserThrew = false;
   try {
-    parsed = parseCommandDetails(command);
+    parsed = parser(command);
   } catch {
+    parserThrew = true;
     parsed = null;
   }
 
   const fallbackSegments = parseFallbackSegments(command);
+  if (parserThrew) {
+    return { segments: expandSegments(fallbackSegments), parserFailed: true };
+  }
+
   if (!parsed) {
     return { segments: expandSegments(fallbackSegments), parserFailed: false };
   }
