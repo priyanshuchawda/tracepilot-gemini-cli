@@ -275,6 +275,13 @@ function describeTier(value: GateTier): string {
 }
 
 function deriveProofLevel(results: GateResult[]): TracePilotProofLevel {
+  const requiredGateFailed = results.some(
+    (result) => result.required && result.status === 'failed',
+  );
+  if (requiredGateFailed) {
+    return TRACEPILOT_PROOF_LEVELS.LOCAL_OFFLINE;
+  }
+
   const phoenixMcp = results.find(
     (result) => result.name === 'phoenix-mcp-smoke',
   );
