@@ -5,7 +5,10 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { classifyTracePilotCommandRisk } from './tracepilot-command-risk.js';
+import {
+  classifyTracePilotCommandRisk,
+  classifyTracePilotCommandRiskWithParser,
+} from './tracepilot-command-risk.js';
 
 describe('TracePilot command risk model', () => {
   it.each([
@@ -92,5 +95,39 @@ describe('TracePilot command risk model', () => {
 
     expect(result.level).toBe('high');
     expect(result.reasonCode).toBe('parse_error');
+  });
+
+  it('fails closed when the structured command parser throws', () => {
+    const result = classifyTracePilotCommandRiskWithParser('npm test', () => {
+      throw new Error('parser unavailable');
+    });
+
+    expect(result.level).toBe('high');
+    expect(result.reasonCode).toBe('parse_error');
+    expect(result.parsedCommands).toEqual([
+      {
+        commandName: 'npm',
+        text: 'npm test',
+        args: ['test'],
+        source: 'fallback',
+      },
+    ]);
+  });
+
+  it('keeps blocked-command precedence when the parser throws', () => {
+    const result = classifyTracePilotCommandRiskWithParser(
+      'npm test && cat .env',
+      () => {
+        throw new Error('parser unavailable');
+      },
+    );
+
+    expect(result.level).toBe('blocked');
+    expect(result.reasonCode).toBe('credential_exposure');
+    expect(
+      result.parsedCommands
+        ?.map((detail) => detail.commandName)
+        .some((name) => name === 'cat'),
+    ).toBe(true);
   });
 });
