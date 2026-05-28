@@ -172,4 +172,72 @@ describe('scripts/tracepilot-ci.mjs', () => {
       ]),
     );
   }, 30000);
+
+  it('writes a non-strict summary when a required gate fails after Phoenix passes', async () => {
+    const { existsSync, mkdtempSync, readFileSync, writeFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-ci-mixed-'));
+    const fakeNpm = path.join(dir, 'fake-npm.cjs');
+    writeFileSync(
+      fakeNpm,
+      [
+        'const command = process.argv.slice(2).join(" ");',
+        'console.log(command);',
+        'if (command === "run lint") process.exit(1);',
+        'process.exit(0);',
+      ].join('\n'),
+    );
+    const env = {
+      ...process.env,
+      NO_COLOR: 'true',
+      TRACEPILOT_CI_NPM_EXEC_PATH: fakeNpm,
+      PHOENIX_API_KEY: 'px-test-key-0000000000000000',
+      PHOENIX_HOST: 'https://app.phoenix.arize.com/s/demo',
+      PHOENIX_BASE_URL: 'https://app.phoenix.arize.com/s/demo',
+      PHOENIX_PROJECT: 'tracepilot-test',
+    };
+    delete env.PHOENIX_COLLECTOR_ENDPOINT;
+
+    const result = spawnSync(
+      process.execPath,
+      [path.resolve('scripts', 'tracepilot-ci.mjs'), '--tier=medium'],
+      {
+        cwd: dir,
+        encoding: 'utf8',
+        env,
+        stdio: 'pipe',
+        timeout: 30_000,
+      },
+    );
+
+    const output = `${result.stdout}\n${result.stderr}`;
+    expect(result.status, output).toBe(1);
+    expect(output).toContain('FAIL lint exit 1');
+    expect(output).toContain('PASS phoenix-mcp-smoke');
+    expect(output).toContain(
+      'PROOF_LEVEL: local_offline strictLiveProof=false',
+    );
+
+    const summaryFile = path.join(
+      dir,
+      '.ai-logs',
+      'tracepilot-ci',
+      'summary.json',
+    );
+    expect(existsSync(summaryFile)).toBe(true);
+    const summary = JSON.parse(readFileSync(summaryFile, 'utf8'));
+    expect(summary).toMatchObject({
+      ok: false,
+      proofLevel: 'local_offline',
+      strictLiveProof: false,
+    });
+    expect(
+      summary.gates.required.find(
+        (item: { name: string }) => item.name === 'lint',
+      ),
+    ).toMatchObject({ status: 'failed', exitCode: 1 });
+    expect(
+      summary.gates.optional.map((item: { name: string }) => item.name),
+    ).toContain('phoenix-mcp-smoke');
+  }, 30000);
 });
