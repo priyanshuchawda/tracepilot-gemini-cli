@@ -18,8 +18,8 @@ describe('TracePilot proof report runtime schema', () => {
       proofLevel: TRACEPILOT_PROOF_LEVELS.LOCAL_OFFLINE,
       strictLiveProof: false,
     });
-    const live = makeReport({
-      proofLevel: TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX,
+    const livePhoenix = makeReport({
+      proofLevel: TRACEPILOT_PROOF_LEVELS.LIVE_PHOENIX,
       strictLiveProof: true,
       phoenix: {
         visible: true,
@@ -28,11 +28,23 @@ describe('TracePilot proof report runtime schema', () => {
         spanId: 'span-id',
       },
     });
+    const liveGemini = makeReport({
+      proofLevel: TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX,
+      strictLiveProof: true,
+      causalTrace: {
+        chainComplete: true,
+      },
+    });
 
     expect(validateTracePilotProofReport(offline).proofLevel).toBe(
       'local_offline',
     );
-    expect(validateTracePilotProofReport(live).strictLiveProof).toBe(true);
+    expect(validateTracePilotProofReport(livePhoenix).strictLiveProof).toBe(
+      true,
+    );
+    expect(validateTracePilotProofReport(liveGemini).strictLiveProof).toBe(
+      true,
+    );
     expect(stableTracePilotProofReportJson(offline)).toContain(
       '"proofLevel":"local_offline"',
     );
@@ -67,6 +79,66 @@ describe('TracePilot proof report runtime schema', () => {
         }),
       ),
     ).toThrow(/strictLiveProof must match proofLevel/);
+  });
+
+  it('rejects strict live Phoenix reports without queryable Phoenix evidence', () => {
+    expect(() =>
+      validateTracePilotProofReport(
+        makeReport({
+          proofLevel: TRACEPILOT_PROOF_LEVELS.LIVE_PHOENIX,
+          strictLiveProof: true,
+          phoenix: {
+            visible: true,
+            queryable: false,
+          },
+        }),
+      ),
+    ).toThrow(/live_phoenix proof requires/);
+  });
+
+  it('rejects strict Gemini Phoenix reports without causal or memory evidence', () => {
+    expect(() =>
+      validateTracePilotProofReport(
+        makeReport({
+          proofLevel: TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX,
+          strictLiveProof: true,
+          phoenix: {
+            visible: true,
+            queryable: true,
+          },
+        }),
+      ),
+    ).toThrow(/live_gemini_phoenix proof requires/);
+  });
+
+  it('accepts live Gemini Phoenix memory replay evidence', () => {
+    const report = makeReport({
+      proofLevel: TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX,
+      strictLiveProof: true,
+      seedOutcome: {
+        visible: true,
+      },
+      replay: {
+        ok: true,
+      },
+      memory: {
+        matched: true,
+        simulated: false,
+      },
+    });
+
+    expect(validateTracePilotProofReport(report).strictLiveProof).toBe(true);
+  });
+
+  it('rejects hosted Cloud Run proof without hosted evidence', () => {
+    expect(() =>
+      validateTracePilotProofReport(
+        makeReport({
+          proofLevel: TRACEPILOT_PROOF_LEVELS.HOSTED_CLOUD_RUN,
+          strictLiveProof: true,
+        }),
+      ),
+    ).toThrow(/hosted_cloud_run proof requires/);
   });
 
   it('blocks secret-bearing proof output with sanitized diagnostics', () => {
