@@ -346,7 +346,46 @@ const evalReportSchema = z
     generatedAt: z.string().datetime(),
     results: z.array(evalResultSchema),
   })
-  .strict();
+  .strict()
+  .superRefine((report, context) => {
+    const passed = report.results.every((result) => result.status === 'pass');
+    if (report.ok !== passed) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ok'],
+        message: 'ok must match deterministic eval result statuses',
+      });
+    }
+
+    const seen = new Set<TracePilotEvalId>();
+    for (const [index, result] of report.results.entries()) {
+      if (seen.has(result.id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['results', index, 'id'],
+          message: `duplicate eval id ${result.id}`,
+        });
+      }
+      seen.add(result.id);
+      if (result.status === 'fail' && !result.failureReason) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['results', index, 'failureReason'],
+          message: 'failed eval results require failureReason',
+        });
+      }
+    }
+
+    for (const evalId of REQUIRED_TRACEPILOT_EVAL_IDS) {
+      if (!seen.has(evalId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['results'],
+          message: `missing required eval id ${evalId}`,
+        });
+      }
+    }
+  });
 
 export function validateTracePilotEvalEvidence(
   evidence: unknown,

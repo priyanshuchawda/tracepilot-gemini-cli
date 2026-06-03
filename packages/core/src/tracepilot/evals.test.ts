@@ -119,6 +119,48 @@ describe('TracePilot deterministic eval runner', () => {
       }),
     ).toThrow(/Invalid TracePilot eval report/);
   });
+
+  it('rejects eval reports whose ok flag does not match result statuses', () => {
+    expect(() =>
+      validateTracePilotEvalReport({
+        ...makeEvalReport('fail'),
+        ok: true,
+      }),
+    ).toThrow(/ok must match deterministic eval result statuses/);
+  });
+
+  it('requires every deterministic eval id exactly once', () => {
+    const missing = makeEvalReport('pass');
+    missing.results = missing.results.filter(
+      (result) => result.id !== 'phoenix_trace_created',
+    );
+    expect(() => validateTracePilotEvalReport(missing)).toThrow(
+      /missing required eval id phoenix_trace_created/,
+    );
+
+    const duplicated = makeEvalReport('pass');
+    duplicated.results = [
+      ...duplicated.results,
+      {
+        id: 'command_success',
+        status: 'pass',
+        deterministic: true,
+        evidence: {},
+      },
+    ];
+    expect(() => validateTracePilotEvalReport(duplicated)).toThrow(
+      /duplicate eval id command_success/,
+    );
+  });
+
+  it('requires failed eval reports to include failure reasons', () => {
+    const report = makeEvalReport('fail');
+    delete report.results[0].failureReason;
+
+    expect(() => validateTracePilotEvalReport(report)).toThrow(
+      /failed eval results require failureReason/,
+    );
+  });
 });
 
 function makePassingEvidence(): TracePilotEvalEvidence {
@@ -183,5 +225,21 @@ function makePassingEvidence(): TracePilotEvalEvidence {
       retryExitCode: 0,
       evalLogged: true,
     },
+  };
+}
+
+function makeEvalReport(status: 'pass' | 'fail') {
+  return {
+    ok: status === 'pass',
+    generatedAt: '2026-05-26T00:00:00.000Z',
+    results: REQUIRED_TRACEPILOT_EVAL_IDS.map((id) => ({
+      id,
+      status,
+      deterministic: true,
+      evidence: {},
+      ...(status === 'fail'
+        ? { failureReason: `${id} did not satisfy deterministic evidence.` }
+        : {}),
+    })),
   };
 }

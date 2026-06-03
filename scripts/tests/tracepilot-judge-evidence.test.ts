@@ -61,8 +61,8 @@ describe('scripts/tracepilot-judge-evidence.ts', () => {
       },
       deterministicEval: {
         ok: true,
-        passCount: 1,
-        failCount: 1,
+        passCount: 7,
+        failCount: 0,
       },
       safety: {
         riskLevel: 'LOW',
@@ -280,25 +280,21 @@ function makeEvalReport() {
     ok: true,
     generatedAt: '2026-05-27T00:00:00.000Z',
     results: [
-      {
-        id: 'command_success',
-        status: 'pass',
-        deterministic: true,
-        evidence: {
-          command: 'npm test',
-          exitCode: 0,
-        },
+      'command_success',
+      'test_passed',
+      'blocked_destructive_command',
+      'secret_redaction_success',
+      'phoenix_trace_created',
+      'self_introspection_triggered',
+      'repair_attempt_successful',
+    ].map((id) => ({
+      id,
+      status: 'pass',
+      deterministic: true,
+      evidence: {
+        fixture: 'judge evidence script test',
       },
-      {
-        id: 'phoenix_trace_created',
-        status: 'fail',
-        deterministic: true,
-        evidence: {
-          queryable: false,
-        },
-        failureReason: 'Phoenix evidence was unavailable in offline mode.',
-      },
-    ],
+    })),
   };
 }
 
