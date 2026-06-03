@@ -74,24 +74,7 @@ const proofReportSchema: z.ZodType<TracePilotProofReport> = z
         message: 'strictLiveProof requires ok=true',
       });
     }
-    if (
-      report.strictLiveProof &&
-      !hasAnyEvidenceField(report, [
-        'phoenix',
-        'phoenixEnv',
-        'causalTrace',
-        'seed',
-        'replay',
-        'memory',
-        'results',
-      ])
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['proofLevel'],
-        message: 'strict proof requires live evidence fields',
-      });
-    }
+    validateStrictProofEvidence(report, context);
   });
 
 export function validateTracePilotProofReport(
@@ -110,12 +93,102 @@ export function stableTracePilotProofReportJson(report: unknown): string {
   return `${stableStringify(validateTracePilotProofReport(report)).replace(/\0/g, '')}\n`;
 }
 
-function hasAnyEvidenceField(
-  report: Record<string, unknown>,
-  fields: string[],
-): boolean {
-  return fields.some((field) => {
-    const value = report[field];
-    return typeof value === 'object' && value !== null;
-  });
+function validateStrictProofEvidence(
+  report: TracePilotProofReport,
+  context: z.RefinementCtx,
+): void {
+  if (!report.strictLiveProof) {
+    return;
+  }
+
+  if (report.proofLevel === TRACEPILOT_PROOF_LEVELS.LIVE_PHOENIX) {
+    if (!hasLivePhoenixEvidence(report)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['phoenix'],
+        message:
+          'live_phoenix proof requires phoenix.visible=true and phoenix.queryable=true',
+      });
+    }
+    return;
+  }
+
+  if (report.proofLevel === TRACEPILOT_PROOF_LEVELS.LIVE_GEMINI_PHOENIX) {
+    if (!hasLiveGeminiPhoenixEvidence(report)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['proofLevel'],
+        message:
+          'live_gemini_phoenix proof requires a completed causal trace or live memory replay evidence',
+      });
+    }
+    return;
+  }
+
+  if (report.proofLevel === TRACEPILOT_PROOF_LEVELS.HOSTED_CLOUD_RUN) {
+    if (!hasHostedCloudRunEvidence(report)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['proofLevel'],
+        message:
+          'hosted_cloud_run proof requires positive hosted Cloud Run evidence',
+      });
+    }
+  }
+}
+
+function hasLivePhoenixEvidence(report: TracePilotProofReport): boolean {
+  const phoenix = getRecord(report['phoenix']);
+  return (
+    getBoolean(phoenix, 'visible') === true &&
+    getBoolean(phoenix, 'queryable') === true
+  );
+}
+
+function hasLiveGeminiPhoenixEvidence(report: TracePilotProofReport): boolean {
+  const causalTrace = getRecord(report['causalTrace']);
+  if (getBoolean(causalTrace, 'chainComplete')) {
+    return true;
+  }
+
+  const memory = getRecord(report['memory']);
+  const seedOutcome = getRecord(report['seedOutcome']);
+  const replay = getRecord(report['replay']);
+  return (
+    getBoolean(memory, 'matched') === true &&
+    getBoolean(memory, 'simulated') === false &&
+    getBoolean(seedOutcome, 'visible') === true &&
+    getBoolean(replay, 'ok') === true
+  );
+}
+
+function hasHostedCloudRunEvidence(report: TracePilotProofReport): boolean {
+  if (getBoolean(report, 'cloudRunDetected') === true) {
+    return true;
+  }
+  const cloudRun = getRecord(report['cloudRun']);
+  if (
+    getBoolean(cloudRun, 'detected') === true ||
+    getBoolean(cloudRun, 'verified') === true
+  ) {
+    return true;
+  }
+  const hosted = getRecord(report['hostedCloudRun']);
+  return getBoolean(hosted, 'verified') === true;
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function getBoolean(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): boolean | undefined {
+  const value = record?.[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
