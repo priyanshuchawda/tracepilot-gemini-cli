@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 describe('scripts/demo-broken-node-app.ts', () => {
   it('runs the deterministic local repair flow without leaking secrets', async () => {
-    const { mkdtempSync, readFileSync } =
+    const { existsSync, mkdtempSync, readFileSync } =
       await vi.importActual<typeof import('node:fs')>('node:fs');
     const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-demo-'));
     const workdir = path.join(dir, 'workdir');
@@ -65,6 +65,35 @@ describe('scripts/demo-broken-node-app.ts', () => {
     expect(report.phoenix.visible).toBe(false);
     expect(report.eval.ok).toBe(false);
     expect(report.eval.results).toHaveLength(7);
+    expect(report.judge).toMatchObject({
+      result: {
+        mode: 'unavailable',
+        ok: false,
+        strictLiveProof: false,
+      },
+    });
+    expect(existsSync(report.judge.inputPath)).toBe(true);
+    expect(existsSync(report.judge.resultPath)).toBe(true);
+    const judgeInput = JSON.parse(readFileSync(report.judge.inputPath, 'utf8'));
+    const judgeResult = JSON.parse(
+      readFileSync(report.judge.resultPath, 'utf8'),
+    );
+    expect(judgeInput).toMatchObject({
+      schemaVersion: 1,
+      repair: {
+        sessionId: report.sessionId,
+        phase: 'verified',
+        verificationPassed: true,
+      },
+      deterministicEval: {
+        ok: false,
+      },
+    });
+    expect(judgeResult).toMatchObject({
+      mode: 'unavailable',
+      ok: false,
+      strictLiveProof: false,
+    });
     expect(
       report.eval.results.find(
         (result: { id: string }) => result.id === 'blocked_destructive_command',
@@ -79,5 +108,7 @@ describe('scripts/demo-broken-node-app.ts', () => {
       },
     });
     expect(JSON.stringify(report)).not.toContain('sk-proj-demoSecret');
+    expect(JSON.stringify(judgeInput)).not.toContain('sk-proj-demoSecret');
+    expect(JSON.stringify(judgeResult)).not.toContain('sk-proj-demoSecret');
   }, 60000);
 });

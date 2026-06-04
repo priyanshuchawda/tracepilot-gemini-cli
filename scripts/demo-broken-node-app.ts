@@ -38,6 +38,13 @@ import {
 } from '../packages/core/src/tracepilot/evals.js';
 import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
 import {
+  createTracePilotJudgeInput,
+  createTracePilotJudgeUnavailableResult,
+  stableTracePilotJudgeInputJson,
+  stableTracePilotJudgeResultJson,
+  type TracePilotJudgeResult,
+} from '../packages/core/src/tracepilot/judgeEvidence.js';
+import {
   describeTracePilotProofLevel,
   isStrictTracePilotProofLevel,
   TRACEPILOT_PROOF_LEVELS,
@@ -80,6 +87,12 @@ interface PhoenixQueryEvidence {
   reason?: string;
   traceId?: string;
   spanId?: string;
+}
+
+interface JudgeArtifactSummary {
+  inputPath: string;
+  resultPath: string;
+  result: TracePilotJudgeResult;
 }
 
 async function main(argv: string[]): Promise<number> {
@@ -174,6 +187,10 @@ async function main(argv: string[]): Promise<number> {
     phoenix,
     startedAt,
   });
+  const judge = await writeJudgeArtifacts(options.output, {
+    repairArtifact,
+    evalReport,
+  });
   const report = {
     ok: retry.exitCode === 0 && (evalReport.ok || options.allowMissingPhoenix),
     proofLevel,
@@ -189,6 +206,7 @@ async function main(argv: string[]): Promise<number> {
     repairPlan,
     repairArtifact,
     eval: evalReport,
+    judge,
   };
 
   await mkdir(path.dirname(path.resolve(options.output)), { recursive: true });
@@ -201,12 +219,51 @@ async function main(argv: string[]): Promise<number> {
     `PROOF_LEVEL: ${report.proofLevel} strictLiveProof=${report.strictLiveProof}`,
   );
   console.log(`TracePilot broken-node-app demo report: ${options.output}`);
+  console.log(`TracePilot judge input: ${judge.inputPath}`);
+  console.log(`TracePilot judge result: ${judge.resultPath}`);
   if (!report.ok && !options.allowMissingPhoenix) {
     console.error(
       'Demo local repair completed, but TracePilot evals are not all passing. Check Phoenix env and MCP visibility.',
     );
   }
   return report.ok ? 0 : 1;
+}
+
+async function writeJudgeArtifacts(
+  reportOutput: string,
+  input: {
+    repairArtifact: ReturnType<typeof buildCompletedRepairArtifact>;
+    evalReport: ReturnType<typeof runTracePilotEvals>;
+  },
+): Promise<JudgeArtifactSummary> {
+  const outputDir = path.dirname(path.resolve(reportOutput));
+  const inputPath = path.join(outputDir, 'judge-input.json');
+  const resultPath = path.join(outputDir, 'judge-result.json');
+  const judgeInput = createTracePilotJudgeInput({
+    repair: input.repairArtifact,
+    deterministicEval: input.evalReport,
+  });
+  const judgeResult = createTracePilotJudgeUnavailableResult(
+    'Repair-quality judge execution was not configured for this deterministic demo.',
+  );
+
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(
+    inputPath,
+    stableTracePilotJudgeInputJson(judgeInput),
+    'utf8',
+  );
+  await writeFile(
+    resultPath,
+    stableTracePilotJudgeResultJson(judgeResult),
+    'utf8',
+  );
+
+  return {
+    inputPath,
+    resultPath,
+    result: judgeResult,
+  };
 }
 
 function buildCompletedRepairArtifact(input: {
