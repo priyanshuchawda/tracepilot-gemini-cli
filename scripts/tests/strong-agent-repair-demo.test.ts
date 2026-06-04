@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 describe('scripts/demo-gemini-repair-agent.ts', () => {
   it('reports a concise local agent proof without leaking secrets', async () => {
-    const { mkdtempSync, readFileSync } =
+    const { existsSync, mkdtempSync, readFileSync } =
       await vi.importActual<typeof import('node:fs')>('node:fs');
     const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-strong-demo-'));
     const workdir = path.join(dir, 'workdir');
@@ -58,6 +58,8 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     expect(stdout).toContain('RETRY_TEST: PASS');
     expect(stdout).toContain(`REPORT: ${output}`);
     expect(report.ok).toBe(true);
+    expect(stdout).toContain(`JUDGE_INPUT: ${report.judge.inputPath}`);
+    expect(stdout).toContain(`JUDGE_RESULT: ${report.judge.resultPath}`);
     expect(report.proofLevel).toBe('controlled_substitute');
     expect(report.strictLiveProof).toBe(false);
     expect(report.proofSummary).toContain(
@@ -84,7 +86,36 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
       )?.evidence,
     ).toMatchObject({ observed: true, level: 'blocked' });
     expect(report.eval.results).toHaveLength(7);
+    expect(report.judge).toMatchObject({
+      result: {
+        mode: 'unavailable',
+        ok: false,
+        strictLiveProof: false,
+      },
+    });
+    expect(existsSync(report.judge.inputPath)).toBe(true);
+    expect(existsSync(report.judge.resultPath)).toBe(true);
+    const judgeInput = JSON.parse(readFileSync(report.judge.inputPath, 'utf8'));
+    const judgeResult = JSON.parse(
+      readFileSync(report.judge.resultPath, 'utf8'),
+    );
+    expect(judgeInput).toMatchObject({
+      schemaVersion: 1,
+      repair: {
+        sessionId: report.sessionId,
+      },
+      deterministicEval: {
+        ok: report.eval.ok,
+      },
+    });
+    expect(judgeResult).toMatchObject({
+      mode: 'unavailable',
+      ok: false,
+      strictLiveProof: false,
+    });
     expect(JSON.stringify(report)).not.toContain('videoSecretToken');
+    expect(JSON.stringify(judgeInput)).not.toContain('videoSecretToken');
+    expect(JSON.stringify(judgeResult)).not.toContain('videoSecretToken');
   }, 180000);
 
   it('falls back after a quota-limited model attempt', async () => {
