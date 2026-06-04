@@ -5,17 +5,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
-import {
-  createTracePilotJudgeInput,
-  createTracePilotJudgeUnavailableResult,
-  stableTracePilotJudgeInputJson,
-  stableTracePilotJudgeResultJson,
-  validateTracePilotJudgeResult,
-} from '../packages/core/src/tracepilot/judgeEvidence.js';
+import { readFile } from 'node:fs/promises';
+import { validateTracePilotJudgeResult } from '../packages/core/src/tracepilot/judgeEvidence.js';
 import { validateTracePilotEvalReport } from '../packages/core/src/tracepilot/evals.js';
 import { validateTracePilotRepairArtifact } from '../packages/core/src/tracepilot/repairReport.js';
 import { redactSensitiveText } from '../packages/core/src/telemetry/sanitize.js';
+import { writeTracePilotJudgeArtifacts } from './tracepilot-judge-artifacts.js';
 
 interface CliOptions {
   repairArtifact?: string;
@@ -55,33 +50,26 @@ async function main(argv: string[]): Promise<number> {
     const deterministicEval = validateTracePilotEvalReport(
       await readJsonFile(options.evalReport),
     );
-    const judgeInput = createTracePilotJudgeInput({
-      repair,
-      deterministicEval,
-    });
     const judgeResult = options.judgeResultInput
       ? validateTracePilotJudgeResult(
           await readJsonFile(options.judgeResultInput),
         )
-      : createTracePilotJudgeUnavailableResult(options.unavailableReason);
+      : undefined;
+    const artifacts = await writeTracePilotJudgeArtifacts({
+      repairArtifact: repair,
+      evalReport: deterministicEval,
+      judgeInputOutput: options.judgeInputOutput,
+      judgeResultOutput: options.judgeResultOutput,
+      judgeResult,
+      unavailableReason: options.unavailableReason,
+    });
 
-    await writeFile(
-      options.judgeInputOutput,
-      stableTracePilotJudgeInputJson(judgeInput),
-      'utf8',
-    );
-    await writeFile(
-      options.judgeResultOutput,
-      stableTracePilotJudgeResultJson(judgeResult),
-      'utf8',
-    );
-
-    console.log(`TracePilot judge input: ${options.judgeInputOutput}`);
-    console.log(`TracePilot judge result: ${options.judgeResultOutput}`);
+    console.log(`TracePilot judge input: ${artifacts.inputPath}`);
+    console.log(`TracePilot judge result: ${artifacts.resultPath}`);
     console.log(
-      `JUDGE_MODE: ${judgeResult.mode} strictLiveProof=${judgeResult.strictLiveProof}`,
+      `JUDGE_MODE: ${artifacts.result.mode} strictLiveProof=${artifacts.result.strictLiveProof}`,
     );
-    return judgeResult.ok ? 0 : 1;
+    return artifacts.result.ok ? 0 : 1;
   } catch (error) {
     console.error(
       `Failed to write TracePilot judge evidence: ${redact(getErrorMessage(error))}`,
