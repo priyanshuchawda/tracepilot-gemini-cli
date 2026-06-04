@@ -10,6 +10,7 @@ import {
   resolvePhoenixHostFromEnv,
   resolveTracePilotPhoenixEnv,
 } from './phoenixEnv.js';
+import { redactSensitiveText } from './sanitize.js';
 
 export {
   PHOENIX_COLLECTOR_ENV_MISSING_REASON,
@@ -35,6 +36,15 @@ export interface DirectPhoenixMcpConfig {
   host: string;
   project: string;
   apiKey: string;
+}
+
+export type PhoenixMcpPackageSource = 'default' | 'env';
+
+export interface PhoenixMcpLaunchConfig {
+  command: 'npx';
+  args: string[];
+  packageSpec: string;
+  packageSource: PhoenixMcpPackageSource;
 }
 
 export interface DirectPhoenixMcpClient {
@@ -67,7 +77,20 @@ export function resolvePhoenixMcpHost(
 }
 
 export function resolvePhoenixMcpPackage(env: NodeJS.ProcessEnv): string {
-  return env[PHOENIX_MCP_PACKAGE_ENV]?.trim() || DEFAULT_PHOENIX_MCP_PACKAGE;
+  return resolvePhoenixMcpLaunchConfig(env).packageSpec;
+}
+
+export function resolvePhoenixMcpLaunchConfig(
+  env: NodeJS.ProcessEnv,
+): PhoenixMcpLaunchConfig {
+  const configuredPackage = env[PHOENIX_MCP_PACKAGE_ENV]?.trim();
+  const packageSpec = configuredPackage || DEFAULT_PHOENIX_MCP_PACKAGE;
+  return {
+    command: 'npx',
+    args: ['-y', packageSpec],
+    packageSpec,
+    packageSource: configuredPackage ? 'env' : 'default',
+  };
 }
 
 export async function callDirectPhoenixMcpGetSpans(
@@ -95,9 +118,10 @@ export async function connectDirectPhoenixMcpClient(
   } = {},
 ): Promise<DirectPhoenixMcpClient> {
   const env = options.env ?? process.env;
+  const launchConfig = resolvePhoenixMcpLaunchConfig(env);
   const transport = new StdioClientTransport({
-    command: 'npx',
-    args: ['-y', resolvePhoenixMcpPackage(env)],
+    command: launchConfig.command,
+    args: launchConfig.args,
     env: {
       ...env,
       PHOENIX_API_KEY: directConfig.apiKey,
@@ -110,7 +134,19 @@ export async function connectDirectPhoenixMcpClient(
     version: '0.0.0',
   });
 
-  await client.connect(transport);
+  try {
+    await client.connect(transport);
+  } catch (error) {
+    await client.close().catch(() => undefined);
+    throw new Error(
+      [
+        'Phoenix MCP connection failed',
+        `packageSource=${launchConfig.packageSource}`,
+        `package=${sanitizeDiagnostic(launchConfig.packageSpec)}`,
+        `reason=${sanitizeDiagnostic(getErrorMessage(error))}`,
+      ].join(' '),
+    );
+  }
   return {
     listTools: async () => {
       const listed = await client.listTools();
@@ -137,6 +173,14 @@ export async function connectDirectPhoenixMcpClient(
       await client.close().catch(() => undefined);
     },
   };
+}
+
+function sanitizeDiagnostic(value: string): string {
+  return redactSensitiveText(value).value;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function toPhoenixMcpToolResult(result: unknown): PhoenixMcpToolResult {
