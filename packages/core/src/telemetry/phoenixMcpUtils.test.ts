@@ -8,10 +8,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   callDirectPhoenixMcpGetSpans,
   collectSpanLikeObjects,
+  connectDirectPhoenixMcpClient,
   getSpanList,
   normalizePhoenixUrl,
   parseJsonText,
   resolveDirectPhoenixMcpConfig,
+  resolvePhoenixMcpLaunchConfig,
   resolveTracePilotPhoenixEnv,
   resolvePhoenixMcpPackage,
   withPhoenixMcpTimeout,
@@ -140,6 +142,16 @@ describe('phoenix MCP utilities', () => {
       project: 'tracepilot',
     });
     expect(resolvePhoenixMcpPackage(env)).toBe('@arizeai/phoenix-mcp@4.0.12');
+    expect(resolvePhoenixMcpLaunchConfig(env)).toMatchObject({
+      command: 'npx',
+      args: ['-y', '@arizeai/phoenix-mcp@4.0.12'],
+      packageSpec: '@arizeai/phoenix-mcp@4.0.12',
+      packageSource: 'env',
+    });
+    expect(resolvePhoenixMcpLaunchConfig({})).toMatchObject({
+      packageSpec: '@arizeai/phoenix-mcp@4.0.13',
+      packageSource: 'default',
+    });
   });
 
   it('parses JSON text with fallback and safely rejects malformed fallback JSON', () => {
@@ -198,6 +210,43 @@ describe('phoenix MCP utilities', () => {
       undefined,
       { timeout: 123 },
     );
+    expect(mcpClient.close).toHaveBeenCalled();
+  });
+
+  it('wraps direct MCP connection failures with redacted diagnostics and closes the client', async () => {
+    mcpClient.connect.mockRejectedValue(
+      new Error('spawn failed PHOENIX_API_KEY=px-secret-0000000000000000'),
+    );
+
+    await expect(
+      connectDirectPhoenixMcpClient(
+        {
+          apiKey: 'px-secret-0000000000000000',
+          host: 'https://app.phoenix.arize.com/s/demo',
+          project: 'tracepilot',
+        },
+        {
+          env: {
+            TRACEPILOT_PHOENIX_MCP_PACKAGE: '@arizeai/phoenix-mcp@4.0.12',
+          },
+        },
+      ),
+    ).rejects.toThrow(/Phoenix MCP connection failed/);
+
+    await expect(
+      connectDirectPhoenixMcpClient(
+        {
+          apiKey: 'px-secret-0000000000000000',
+          host: 'https://app.phoenix.arize.com/s/demo',
+          project: 'tracepilot',
+        },
+        {
+          env: {
+            TRACEPILOT_PHOENIX_MCP_PACKAGE: '@arizeai/phoenix-mcp@4.0.12',
+          },
+        },
+      ),
+    ).rejects.not.toThrow(/px-secret/);
     expect(mcpClient.close).toHaveBeenCalled();
   });
 
