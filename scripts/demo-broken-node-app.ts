@@ -48,6 +48,7 @@ import type { TracePilotVerificationResult } from '../packages/core/src/tracepil
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 import {
   defaultTracePilotJudgeArtifactPaths,
+  readTracePilotJudgeResultFile,
   writeTracePilotJudgeArtifacts,
 } from './tracepilot-judge-artifacts.js';
 
@@ -59,6 +60,7 @@ interface CliOptions {
   workdir: string;
   output: string;
   allowMissingPhoenix: boolean;
+  judgeResultInput?: string;
 }
 
 interface CommandResult {
@@ -171,10 +173,14 @@ async function main(argv: string[]): Promise<number> {
     phoenix,
     startedAt,
   });
+  const judgeResult = options.judgeResultInput
+    ? await readTracePilotJudgeResultFile(options.judgeResultInput)
+    : undefined;
   const judge = await writeTracePilotJudgeArtifacts({
     repairArtifact,
     evalReport,
     ...defaultTracePilotJudgeArtifactPaths(options.output),
+    judgeResult,
     unavailableReason:
       'Repair-quality judge execution was not configured for this deterministic demo.',
   });
@@ -325,6 +331,8 @@ function parseArgs(argv: string[]): CliOptions {
       options.output = argv[++index] ?? options.output;
     } else if (arg === '--allow-missing-phoenix') {
       options.allowMissingPhoenix = true;
+    } else if (arg === '--judge-result-input') {
+      options.judgeResultInput = argv[++index] ?? options.judgeResultInput;
     }
   }
   return options;

@@ -111,4 +111,83 @@ describe('scripts/demo-broken-node-app.ts', () => {
     expect(JSON.stringify(judgeInput)).not.toContain('sk-proj-demoSecret');
     expect(JSON.stringify(judgeResult)).not.toContain('sk-proj-demoSecret');
   }, 60000);
+
+  it('bundles a supplied scored judge result in the demo report', async () => {
+    const { mkdtempSync, readFileSync, writeFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-demo-scored-'));
+    const workdir = path.join(dir, 'workdir');
+    const output = path.join(dir, 'result.json');
+    const scoredResult = path.join(dir, 'scored-result.json');
+    writeFileSync(scoredResult, JSON.stringify(makeScoredJudgeResult()));
+
+    execFileSync(
+      'node',
+      [
+        '--import',
+        'tsx',
+        'scripts/demo-broken-node-app.ts',
+        '--allow-missing-phoenix',
+        '--workdir',
+        workdir,
+        '--output',
+        output,
+        '--judge-result-input',
+        scoredResult,
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PHOENIX_API_KEY: '',
+          PHOENIX_HOST: '',
+          PHOENIX_PROJECT: '',
+          PHOENIX_BASE_URL: '',
+          PHOENIX_COLLECTOR_ENDPOINT: '',
+        },
+        stdio: 'pipe',
+      },
+    );
+
+    const report = JSON.parse(readFileSync(output, 'utf8'));
+    const judgeResult = JSON.parse(
+      readFileSync(report.judge.resultPath, 'utf8'),
+    );
+    expect(report.judge.result).toMatchObject({
+      mode: 'scored',
+      ok: true,
+      strictLiveProof: false,
+      overallScore: 0.93,
+      model: 'gemini-test-judge',
+    });
+    expect(judgeResult).toMatchObject(report.judge.result);
+    expect(judgeResult.criteria).toHaveLength(5);
+    expect(JSON.stringify(report)).not.toContain('sk-proj-demoSecret');
+    expect(JSON.stringify(judgeResult)).not.toContain('sk-proj-demoSecret');
+  }, 60000);
 });
+
+function makeScoredJudgeResult() {
+  return {
+    schemaVersion: 1,
+    mode: 'scored',
+    ok: true,
+    strictLiveProof: false,
+    generatedAt: '2026-05-27T00:00:00.000Z',
+    summary: 'Repair is correct, minimal, evidence-backed, and safe.',
+    model: 'gemini-test-judge',
+    overallScore: 0.93,
+    criteria: [
+      'correctness',
+      'minimality',
+      'evidence_use',
+      'safety',
+      'confidence',
+    ].map((criterion) => ({
+      id: criterion,
+      score: 0.9,
+      rationale: `${criterion} criterion passed`,
+      evidence: ['deterministic fixture'],
+    })),
+  };
+}
