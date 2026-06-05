@@ -16,6 +16,7 @@ import {
   resolveTracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { redactSensitiveText } from '../packages/core/src/telemetry/sanitize.js';
+import { resolveTracePilotNpmCommand } from './tracepilot-command-resolution.js';
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -270,7 +271,8 @@ function readPackageScripts(): Record<string, unknown> {
 
 function checkNpm(): DoctorReport['npm'] {
   try {
-    const version = execFileSync('npm', ['--version'], {
+    const command = resolveTracePilotNpmCommand(['--version']);
+    const version = execFileSync(command.executable, command.args, {
       encoding: 'utf8',
       stdio: 'pipe',
       timeout: 5000,
