@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   createTracePilotJudgeInput,
@@ -77,4 +77,12 @@ export async function writeTracePilotJudgeArtifacts(
     resultPath: options.judgeResultOutput,
     result: judgeResult,
   };
+}
+
+export async function readTracePilotJudgeResultFile(
+  file: string,
+): Promise<TracePilotJudgeResult> {
+  return validateTracePilotJudgeResult(
+    JSON.parse(await readFile(file, 'utf8')) as unknown,
+  );
 }

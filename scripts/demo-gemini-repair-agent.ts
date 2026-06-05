@@ -66,6 +66,7 @@ import type { TracePilotVerificationResult } from '../packages/core/src/tracepil
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 import {
   defaultTracePilotJudgeArtifactPaths,
+  readTracePilotJudgeResultFile,
   writeTracePilotJudgeArtifacts,
 } from './tracepilot-judge-artifacts.js';
 
@@ -86,6 +87,7 @@ interface Options {
   cliPath: string;
   model: string;
   modelFallbacks: string[];
+  judgeResultInput?: string;
 }
 
 interface CommandResult {
@@ -218,10 +220,14 @@ async function main(argv: string[]): Promise<number> {
     evalOk: evalReport.ok,
     startedAt,
   });
+  const judgeResult = options.judgeResultInput
+    ? await readTracePilotJudgeResultFile(options.judgeResultInput)
+    : undefined;
   const judge = await writeTracePilotJudgeArtifacts({
     repairArtifact,
     evalReport,
     ...defaultTracePilotJudgeArtifactPaths(options.output),
+    judgeResult,
     unavailableReason:
       'Repair-quality judge execution was not configured for this Gemini repair demo.',
   });
@@ -608,6 +614,8 @@ function parseArgs(argv: string[]): Options {
       options.model = argv[++index] ?? options.model;
     } else if (arg === '--model-fallbacks') {
       options.modelFallbacks = parseModelList(argv[++index]);
+    } else if (arg === '--judge-result-input') {
+      options.judgeResultInput = argv[++index] ?? options.judgeResultInput;
     }
   }
   return options;

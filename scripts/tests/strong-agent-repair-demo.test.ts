@@ -11,11 +11,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 describe('scripts/demo-gemini-repair-agent.ts', () => {
   it('reports a concise local agent proof without leaking secrets', async () => {
-    const { existsSync, mkdtempSync, readFileSync } =
+    const { existsSync, mkdtempSync, readFileSync, writeFileSync } =
       await vi.importActual<typeof import('node:fs')>('node:fs');
     const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-strong-demo-'));
     const workdir = path.join(dir, 'workdir');
     const output = path.join(dir, 'result.json');
+    const scoredResult = path.join(dir, 'scored-result.json');
+    writeFileSync(scoredResult, JSON.stringify(makeScoredJudgeResult()));
 
     const stdout = execFileSync(
       'node',
@@ -30,6 +32,8 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
         workdir,
         '--output',
         output,
+        '--judge-result-input',
+        scoredResult,
       ],
       {
         cwd: process.cwd(),
@@ -88,9 +92,11 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
     expect(report.eval.results).toHaveLength(7);
     expect(report.judge).toMatchObject({
       result: {
-        mode: 'unavailable',
-        ok: false,
+        mode: 'scored',
+        ok: true,
         strictLiveProof: false,
+        overallScore: 0.93,
+        model: 'gemini-test-judge',
       },
     });
     expect(existsSync(report.judge.inputPath)).toBe(true);
@@ -109,10 +115,13 @@ describe('scripts/demo-gemini-repair-agent.ts', () => {
       },
     });
     expect(judgeResult).toMatchObject({
-      mode: 'unavailable',
-      ok: false,
+      mode: 'scored',
+      ok: true,
       strictLiveProof: false,
+      overallScore: 0.93,
+      model: 'gemini-test-judge',
     });
+    expect(judgeResult.criteria).toHaveLength(5);
     expect(JSON.stringify(report)).not.toContain('videoSecretToken');
     expect(JSON.stringify(judgeInput)).not.toContain('videoSecretToken');
     expect(JSON.stringify(judgeResult)).not.toContain('videoSecretToken');
@@ -273,3 +282,28 @@ console.log(JSON.stringify({ type: 'result', status: 'success' }));
     expect(report.agent.attempts).toHaveLength(2);
   }, 180000);
 });
+
+function makeScoredJudgeResult() {
+  return {
+    schemaVersion: 1,
+    mode: 'scored',
+    ok: true,
+    strictLiveProof: false,
+    generatedAt: '2026-05-27T00:00:00.000Z',
+    summary: 'Repair is correct, minimal, evidence-backed, and safe.',
+    model: 'gemini-test-judge',
+    overallScore: 0.93,
+    criteria: [
+      'correctness',
+      'minimality',
+      'evidence_use',
+      'safety',
+      'confidence',
+    ].map((criterion) => ({
+      id: criterion,
+      score: 0.9,
+      rationale: `${criterion} criterion passed`,
+      evidence: ['deterministic fixture'],
+    })),
+  };
+}
