@@ -6,7 +6,10 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { validateTracePilotEvalReport } from '../packages/core/src/tracepilot/evals.js';
+import {
+  validateTracePilotEvalReport,
+  type TracePilotEvalReport,
+} from '../packages/core/src/tracepilot/evals.js';
 import { validateTracePilotRepairArtifact } from '../packages/core/src/tracepilot/repairReport.js';
 import { redactSensitiveText } from '../packages/core/src/telemetry/sanitize.js';
 import {
@@ -49,8 +52,8 @@ async function main(argv: string[]): Promise<number> {
     const repair = validateTracePilotRepairArtifact(
       await readJsonFile(options.repairArtifact),
     );
-    const deterministicEval = validateTracePilotEvalReport(
-      await readJsonFile(options.evalReport),
+    const deterministicEval = await readTracePilotEvalReportFile(
+      options.evalReport,
     );
     const judgeResult = options.judgeResultInput
       ? await readTracePilotJudgeResultFile(options.judgeResultInput)
@@ -82,6 +85,21 @@ async function readJsonFile(file: string): Promise<unknown> {
   return JSON.parse(await readFile(file, 'utf8')) as unknown;
 }
 
+async function readTracePilotEvalReportFile(
+  file: string,
+): Promise<TracePilotEvalReport> {
+  const parsed = await readJsonFile(file);
+  try {
+    return validateTracePilotEvalReport(parsed);
+  } catch (rawReportError) {
+    const nestedEval = getRecord(parsed)?.['eval'];
+    if (nestedEval !== undefined) {
+      return validateTracePilotEvalReport(nestedEval);
+    }
+    throw rawReportError;
+  }
+}
+
 function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     unavailableReason:
@@ -108,6 +126,12 @@ function parseArgs(argv: string[]): CliOptions {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function redact(value: string): string {
