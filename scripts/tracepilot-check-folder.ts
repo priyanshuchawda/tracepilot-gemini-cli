@@ -30,16 +30,13 @@ import {
   GEN_AI_TOOL_NAME,
 } from '../packages/core/src/telemetry/constants.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
-import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
-import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
+import { buildCompletedTracePilotRepairArtifact } from '../packages/core/src/tracepilot/completedRepairArtifact.js';
 import {
-  completeTracePilotRepairArtifact,
-  createTracePilotRepairArtifact,
   renderTracePilotRepairMarkdown,
   stableTracePilotRepairArtifactJson,
   type TracePilotPatchSummary,
+  type TracePilotRepairArtifact,
 } from '../packages/core/src/tracepilot/repairReport.js';
-import { classifyTracePilotPatchRisk } from '../packages/core/src/tracepilot/repairRisk.js';
 import {
   calculateTracePilotRegressionConfidence,
   type TracePilotVerificationResult,
@@ -86,20 +83,9 @@ async function main(argv: string[]): Promise<number> {
     }
 
     const firstFailure = runs.find((run) => run.exitCode !== 0);
-    const failurePreview = createRedactedOutputPreview(
-      firstFailure
-        ? `${firstFailure.stdout}\n${firstFailure.stderr}`
-        : 'TracePilot verification matrix passed.',
-    );
-    const signature = buildTracePilotFailureSignature({
-      command: firstFailure
-        ? formatCommand(firstFailure.spec)
-        : 'tracepilot verification matrix',
-      exitCode: firstFailure?.exitCode ?? 0,
-      outputPreview: failurePreview.preview,
-      outputSha256: failurePreview.sha256,
-      dependencies: await readPackageVersions(workdir),
-    });
+    const failureOutput = firstFailure
+      ? `${firstFailure.stdout}\n${firstFailure.stderr}`
+      : 'TracePilot verification matrix passed.';
     const verificationMatrix: TracePilotVerificationResult[] = runs.map(
       (run) => {
         const preview = createRedactedOutputPreview(
@@ -118,90 +104,71 @@ async function main(argv: string[]): Promise<number> {
     );
     const regressionConfidence =
       calculateTracePilotRegressionConfidence(verificationMatrix);
-    const patchRisk = classifyTracePilotPatchRisk({
-      filesModified: [],
-    });
-    const confidence = calculateTracePilotRepairConfidence({
-      phoenixEvidenceAvailable: provider !== undefined,
-      verificationCoverageScore: verificationMatrix.length > 0 ? 1 : 0,
-      patchMinimalityScore: 1,
-      riskLevel: patchRisk.level,
-      regressionPassed: regressionConfidence === 1,
-    });
     const patches: TracePilotPatchSummary[] = [];
-    const plannedArtifact = createTracePilotRepairArtifact({
-      schemaVersion: 1,
+    const finalExitCode = verificationMatrix.every(
+      (check) => check.status === 'pass',
+    )
+      ? 0
+      : 1;
+    const artifact = buildCompletedTracePilotRepairArtifact({
       sessionId,
-      phase: 'planned',
-      failure: {
-        summary: firstFailure
-          ? `Verification failed in ${formatCommand(firstFailure.spec)}`
-          : 'Verification matrix passed without repair.',
-        rootCause: signature.taxonomy,
-        signature,
+      failedCommand: {
+        command: firstFailure
+          ? formatCommand(firstFailure.spec)
+          : 'tracepilot verification matrix',
+        exitCode: firstFailure?.exitCode ?? 0,
+        output: failureOutput,
       },
-      phoenix: {
-        tracesConsulted: [],
-        mcpQueries: [
-          {
-            serverName: 'phoenix',
-            toolName: 'get-spans',
-            arguments: {
-              mode: 'local-verification-artifact',
-              sessionId,
-              signatureId: signature.id,
-            },
-            resultCount: 0,
-            status: provider ? 'ok' : 'skipped',
-            reason: provider
-              ? undefined
-              : 'Phoenix env not configured; local deterministic artifact generated.',
-          },
-        ],
+      retryCommand: {
+        command: 'tracepilot verification matrix',
+        exitCode: finalExitCode,
+        output: runs.map((run) => `${run.stdout}\n${run.stderr}`).join('\n'),
       },
-      repair: {
-        selectedStrategy: firstFailure
-          ? [
-              'Inspect the failing command output.',
-              'Apply a minimal patch tied to the failure signature.',
-              'Rerun the full TracePilot verification matrix.',
-            ]
-          : ['No repair required; persist successful verification evidence.'],
-        historicalMatches: [],
-        patches,
-        filesModified: [],
-      },
-      safety: {
-        risk: patchRisk,
-        rollbackStrategy: ['No patch applied by tracepilot-check-folder.'],
-      },
-      verification: {
-        matrix: verificationMatrix,
-        regressionConfidence,
-      },
-      confidence,
-      metrics: {
-        repairDurationMs: Date.now() - startedAt,
-        retriesRequired: 0,
-        unsafeCommandsBlocked: 0,
-      },
-    });
-    const artifact = completeTracePilotRepairArtifact(plannedArtifact, {
       filesModified: [],
       patches,
+      selectedStrategy: firstFailure
+        ? [
+            'Inspect the failing command output.',
+            'Apply a minimal patch tied to the failure signature.',
+            'Rerun the full TracePilot verification matrix.',
+          ]
+        : ['No repair required; persist successful verification evidence.'],
+      rollbackStrategy: ['No patch applied by tracepilot-check-folder.'],
       verificationMatrix,
-      retryMetadata: {
-        attempts: 1,
-        retryCommands: specs.map(formatCommand),
-        finalExitCode: verificationMatrix.every(
-          (check) => check.status === 'pass',
-        )
-          ? 0
-          : 1,
-      },
+      phoenixEvidenceAvailable: provider !== undefined,
+      phoenixTracesConsulted: [],
+      phoenixMcpQueries: (signature) => [
+        {
+          serverName: 'phoenix',
+          toolName: 'get-spans',
+          arguments: {
+            mode: 'local-verification-artifact',
+            sessionId,
+            signatureId: signature.id,
+          },
+          resultCount: 0,
+          status: provider ? 'ok' : 'skipped',
+          reason: provider
+            ? undefined
+            : 'Phoenix env not configured; local deterministic artifact generated.',
+        },
+      ],
       repairDurationMs: Date.now() - startedAt,
       completedAt: new Date().toISOString(),
-      rollbackStrategy: ['No patch applied by tracepilot-check-folder.'],
+      failureSummary: firstFailure
+        ? `Verification failed in ${formatCommand(firstFailure.spec)}`
+        : 'Verification matrix passed without repair.',
+      failureSignatureDependencies: await readPackageVersions(workdir),
+      completion: {
+        attempts: 1,
+        retryCommands: specs.map(formatCommand),
+        finalExitCode,
+      },
+      confidence: {
+        verificationCoverageScore: verificationMatrix.length > 0 ? 1 : 0,
+        patchMinimalityScore: 1,
+        regressionPassed: regressionConfidence === 1,
+      },
     });
 
     recordRepairArtifactSpan(sessionId, artifact);
@@ -344,7 +311,7 @@ function recordCommandSpan(sessionId: string, run: CommandRun): void {
 
 function recordRepairArtifactSpan(
   sessionId: string,
-  artifact: ReturnType<typeof createTracePilotRepairArtifact>,
+  artifact: TracePilotRepairArtifact,
 ): void {
   const tracer = trace.getTracer('tracepilot-check-folder');
   const span = tracer.startSpan('gemini_cli.chain.repair_report', {
