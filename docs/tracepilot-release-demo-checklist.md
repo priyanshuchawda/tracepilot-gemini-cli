@@ -7,6 +7,9 @@ designed to prevent demo polish from hiding unverified Phoenix integration.
 
 - `npm ci` completed on a clean checkout.
 - `npm run ci:tracepilot` passes.
+- `npm run doctor:tracepilot` reports the expected local readiness state.
+- `npm run tracepilot:check` writes a sanitized repair artifact/report for the
+  checkout being presented.
 - `npm run smoke:cloud-run:local` passes.
 - `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"` passes against the
   actual judging URL.
@@ -18,6 +21,9 @@ designed to prevent demo polish from hiding unverified Phoenix integration.
   use this command for the agent-repair video.
 - The generated demo report contains no raw API keys, bearer tokens,
   authorization headers, private keys, database URLs, or `.env` contents.
+- The generated `judge-input.json` and `judge-result.json` contain no raw API
+  keys, bearer tokens, authorization headers, private keys, database URLs, or
+  `.env` contents.
 
 ## Acceptable Offline Demo
 
@@ -35,6 +41,7 @@ Offline demo evidence may show:
 - patched fixture
 - passing retry
 - sanitized eval JSON
+- non-strict judge artifact JSON
 - explicit Phoenix unavailable/skipped reason
 
 Offline demo evidence must not claim:
@@ -43,6 +50,31 @@ Offline demo evidence must not claim:
 - Phoenix MCP query success
 - real self-introspection against Phoenix Cloud
 - complete MVP end-to-end proof
+
+## Judge Evidence Artifacts
+
+Every demo report should be accompanied by the generated judge artifacts:
+
+- `judge-input.json`
+- `judge-result.json`
+
+Without a supplied scored result, `judge-result.json` must say
+`mode: "unavailable"` and `strictLiveProof: false`. If an external or live judge
+produces a scored result, validate and bundle it with:
+
+```bash
+npm run judge:tracepilot -- \
+  --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json \
+  --eval-report .ai-logs/demo-broken-node-app/result.json \
+  --judge-input-output .ai-logs/tracepilot-judge/judge-input.json \
+  --judge-result-input .ai-logs/tracepilot-judge/scored-result.json \
+  --judge-result-output .ai-logs/tracepilot-judge/judge-result.json
+```
+
+The deterministic and Gemini demo commands also accept `--judge-result-input` so
+a validated scored result can be bundled directly into their report metadata.
+Judge artifacts are repair-quality review evidence; they do not make an offline
+or degraded proof strict.
 
 ## Video-Ready Gemini Demo Command
 
