@@ -46,6 +46,26 @@ describe('scripts/tracepilot-doctor.ts', () => {
     const written = JSON.parse(readFileSync(output, 'utf8'));
     expect(report.localDeterministicReady).toBe(true);
     expect(report.strictLiveReady).toBe(false);
+    expect(report.commandSurface).toMatchObject({
+      requiredScriptsPresent: true,
+      scripts: {
+        'ci:tracepilot': true,
+        'tracepilot:check': true,
+        'doctor:tracepilot': true,
+        'eval:tracepilot': true,
+        'judge:tracepilot': true,
+        'demo:broken-node-app': true,
+        'demo:gemini-repair-agent': true,
+      },
+    });
+    expect(
+      report.checks.find(
+        (check: { id: string }) => check.id === 'tracepilot-command-surface',
+      ),
+    ).toMatchObject({
+      status: 'pass',
+      summary: 'TracePilot npm scripts',
+    });
     expect(report.phoenix.mcpReady).toBe(false);
     expect(report.gemini.apiKeyPresent).toBe(false);
     expect(written).toMatchObject({
@@ -77,6 +97,7 @@ describe('scripts/tracepilot-doctor.ts', () => {
 
     const report = JSON.parse(stdout);
     expect(report.strictLiveReady).toBe(true);
+    expect(report.commandSurface.requiredScriptsPresent).toBe(true);
     expect(report.phoenix).toMatchObject({
       collectorReady: true,
       mcpReady: true,

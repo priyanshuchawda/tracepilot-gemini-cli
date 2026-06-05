@@ -8,7 +8,7 @@
 import dotenv from 'dotenv';
 dotenv.config({ quiet: true });
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -18,6 +18,16 @@ import {
 import { redactSensitiveText } from '../packages/core/src/telemetry/sanitize.js';
 
 type CheckStatus = 'pass' | 'warn' | 'fail';
+
+const REQUIRED_TRACEPILOT_SCRIPTS = [
+  'ci:tracepilot',
+  'tracepilot:check',
+  'doctor:tracepilot',
+  'eval:tracepilot',
+  'judge:tracepilot',
+  'demo:broken-node-app',
+  'demo:gemini-repair-agent',
+] as const;
 
 interface DoctorCheck {
   id: string;
@@ -45,6 +55,10 @@ interface DoctorReport {
     tsxPresent: boolean;
     vitestPresent: boolean;
     typescriptPresent: boolean;
+  };
+  commandSurface: {
+    requiredScriptsPresent: boolean;
+    scripts: Record<(typeof REQUIRED_TRACEPILOT_SCRIPTS)[number], boolean>;
   };
   phoenix: {
     collectorReady: boolean;
@@ -96,6 +110,7 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
   const gemini = {
     apiKeyPresent: nonEmpty(env['GEMINI_API_KEY']) !== undefined,
   };
+  const commandSurface = checkCommandSurface();
   const phoenix = {
     collectorReady: phoenixEnv.collectorReady,
     mcpReady: phoenixEnv.mcpReady,
@@ -109,7 +124,8 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
     packages.nodeModulesPresent &&
     packages.tsxPresent &&
     packages.vitestPresent &&
-    packages.typescriptPresent;
+    packages.typescriptPresent &&
+    commandSurface.requiredScriptsPresent;
   const strictLiveReady =
     localDeterministicReady &&
     gemini.apiKeyPresent &&
@@ -118,6 +134,7 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
   const checks = buildChecks({
     npm,
     packages,
+    commandSurface,
     phoenix,
     gemini,
   });
@@ -133,6 +150,7 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
     },
     npm,
     packages,
+    commandSurface,
     phoenix,
     gemini,
     recommendedCommands: strictLiveReady
@@ -153,6 +171,7 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
 function buildChecks(input: {
   npm: DoctorReport['npm'];
   packages: DoctorReport['packages'];
+  commandSurface: DoctorReport['commandSurface'];
   phoenix: DoctorReport['phoenix'];
   gemini: DoctorReport['gemini'];
 }): DoctorCheck[] {
@@ -183,6 +202,14 @@ function buildChecks(input: {
       detail: `node_modules=${input.packages.nodeModulesPresent} tsx=${input.packages.tsxPresent} vitest=${input.packages.vitestPresent} typescript=${input.packages.typescriptPresent}`,
     },
     {
+      id: 'tracepilot-command-surface',
+      status: input.commandSurface.requiredScriptsPresent ? 'pass' : 'fail',
+      summary: 'TracePilot npm scripts',
+      detail: Object.entries(input.commandSurface.scripts)
+        .map(([script, present]) => `${script}=${present}`)
+        .join(' '),
+    },
+    {
       id: 'gemini-env',
       status: input.gemini.apiKeyPresent ? 'pass' : 'warn',
       summary: input.gemini.apiKeyPresent
@@ -206,6 +233,33 @@ function buildChecks(input: {
       detail: input.phoenix.mcpSkipReason,
     },
   ];
+}
+
+function checkCommandSurface(): DoctorReport['commandSurface'] {
+  const packageScripts = readPackageScripts();
+  const scripts = Object.fromEntries(
+    REQUIRED_TRACEPILOT_SCRIPTS.map((script) => [
+      script,
+      typeof packageScripts[script] === 'string',
+    ]),
+  ) as DoctorReport['commandSurface']['scripts'];
+  return {
+    requiredScriptsPresent: Object.values(scripts).every(Boolean),
+    scripts,
+  };
+}
+
+function readPackageScripts(): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(path.resolve('package.json'), 'utf8'),
+    ) as {
+      scripts?: Record<string, unknown>;
+    };
+    return parsed.scripts ?? {};
+  } catch {
+    return {};
+  }
 }
 
 function checkNpm(): DoctorReport['npm'] {
