@@ -4,7 +4,8 @@ TracePilot is a Gemini CLI fork that turns agent debugging into an observable
 repair loop. It keeps the Gemini CLI agent runtime, then adds Phoenix
 OpenTelemetry tracing, OpenInference-oriented spans, Phoenix MCP
 self-introspection, redaction, deterministic evals, command safety gates, and a
-broken-repo repair demo that proves the loop end to end.
+broken-repo repair demo that proves the loop end to end. TracePilot also writes
+judge input/result artifacts for repair-quality review.
 
 Cloud deployment note: this repo includes a cheap Cloud Run status/demo surface
 and Secret Manager deploy helpers, but no live Cloud Run URL is claimed in the
@@ -24,6 +25,8 @@ The strict verified flow is:
 7. The test reruns and passes.
 8. Deterministic eval JSON records command success, test pass, safety,
    redaction, Phoenix trace creation, self-introspection, and repair success.
+9. Judge input/result artifacts package the repair and eval evidence for
+   non-strict repair-quality review.
 
 Latest strict local/Phoenix evidence:
 
@@ -48,6 +51,11 @@ Latest strict local/Phoenix evidence:
 - Repair planner: `packages/core/src/tracepilot/repairPlanner.ts`.
 - Deterministic evals: `packages/core/src/tracepilot/evals.ts` and
   `scripts/tracepilot-evals.ts`.
+- Repair artifact builder:
+  `packages/core/src/tracepilot/completedRepairArtifact.ts`.
+- Judge evidence artifacts: `packages/core/src/tracepilot/judgeEvidence.ts`,
+  `scripts/tracepilot-judge-artifacts.ts`, and
+  `scripts/tracepilot-judge-evidence.ts`.
 - Hosted proof surface: `scripts/tracepilot-cloud-run-server.mjs`,
   `scripts/tracepilot-cloud-run-deploy.mjs`, and
   `Dockerfile.tracepilot-cloud-run`.
@@ -91,14 +99,17 @@ Latest strict local/Phoenix evidence:
 - The command safety gate blocks destructive or credential-dumping commands and
   requires confirmation for high-risk commands.
 - Deterministic TracePilot evals write machine-readable JSON.
+- TracePilot judge artifact commands write sanitized judge input/result JSON,
+  including validated supplied scored judge results when provided.
 - `examples/broken-node-app` proves both offline repair and strict
   Phoenix-backed repair.
 - Cloud Run deploy/smoke tooling is present for later redeployment.
 
 ### Honest Limits
 
-- The repair planner is deterministic and evidence-driven; it is not a general
-  LLM judge.
+- The repair planner is deterministic and evidence-driven. Judge artifacts are a
+  separate repair-quality evidence format, and they do not replace strict
+  Phoenix proof.
 - Redaction is pattern-based and tested for implemented secret formats. It is
   not a full DLP product.
 - Full root `npm test` is still long locally; use focused slices and CI gates.
@@ -144,6 +155,8 @@ npm run build
 npx vitest run --coverage=false packages/core/src/telemetry/phoenixSelfIntrospection.test.ts packages/core/src/tracepilot/repairPlanner.test.ts
 npx vitest run --coverage=false packages/core/src/policy/shell-safety.test.ts packages/core/src/policy/tracepilot-command-risk.test.ts
 npm run test:scripts
+npm run doctor:tracepilot
+npm run tracepilot:check
 ```
 
 Phoenix smoke checks:
@@ -189,6 +202,8 @@ and eval logging.
 | Self-introspection             | Phoenix MCP smoke, strict demo, and scheduler tests                                   | Working                          | Strict demo queried Phoenix MCP; tests cover matching failed span selection and unavailable handling when evidence is absent. |
 | Repair planner                 | `packages/core/src/tracepilot/repairPlanner.test.ts`                                  | Working locally                  | Planner consumes structured trace evidence, emits `gemini_cli.chain.repair_plan`, and degrades when evidence is unavailable.  |
 | Deterministic evals            | `npm run test:scripts`                                                                | Working locally                  | Eval runner writes sanitized JSON and checks required deterministic eval IDs.                                                 |
+| Repair artifacts               | `npm run tracepilot:check`                                                            | Working locally                  | Shared builder writes sanitized repair artifact JSON and markdown report for a target folder.                                 |
+| Judge artifacts                | `npm run judge:tracepilot`                                                            | Working locally                  | Judge input/result JSON is generated from repair artifact plus eval report; scored judge results are validated when supplied. |
 | Broken repo demo               | `npm run demo:broken-node-app`                                                        | Working                          | Strict demo passed with Phoenix trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals.                         |
 | Cloud Run local smoke          | `npm run smoke:cloud-run:local`                                                       | Working locally                  | Verifies the deployable health/status/demo surface without requiring a live service.                                          |
 | Hosted Cloud Run URL           | `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`                           | Not currently deployed           | User intentionally removed Cloud Run for now; redeploy later with the included cheap deploy helper before sharing a URL.      |

@@ -29,6 +29,7 @@ TracePilot is built to prove this repair loop:
 8. The agent reruns the test.
 9. The test passes.
 10. A deterministic eval result is logged.
+11. Judge input/result artifacts are written for repair-quality review.
 
 Latest verified Phoenix evidence:
 
@@ -98,9 +99,12 @@ Focused TracePilot checks:
 ```bash
 npm run ci:tracepilot                 # fast local tier
 npm run ci:tracepilot -- --tier=medium
+npm run doctor:tracepilot
+npm run tracepilot:check
 npm run smoke:phoenix
 npm run smoke:phoenix:mcp
 npm run demo:broken-node-app
+npm run judge:tracepilot -- --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --eval-report .ai-logs/demo-broken-node-app/result.json --judge-input-output .ai-logs/judge-input.json --judge-result-output .ai-logs/judge-result.json
 npm run smoke:cloud-run:local
 ```
 
@@ -109,6 +113,14 @@ Use focused checks during development because the full root `npm test` is long.
 `.ai-logs/tracepilot-ci/summary.json`. Save full logs under ignored `.ai-logs/`
 files and share only pass/fail status, exit codes, and short redacted tails on
 failure.
+
+`doctor:tracepilot` checks local readiness for strict proof prerequisites.
+`tracepilot:check` writes a sanitized repair artifact/report for the current
+folder. `judge:tracepilot` turns a repair artifact plus deterministic eval
+report into `judge-input.json` and `judge-result.json`; supplied scored judge
+results may also be bundled by demo commands with `--judge-result-input`. Judge
+artifacts are repair-quality evidence, not a replacement for strict Phoenix
+proof.
 
 ## Environment
 

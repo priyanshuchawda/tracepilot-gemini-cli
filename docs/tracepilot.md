@@ -55,6 +55,66 @@ run optional `npm run smoke:phoenix` and `npm run smoke:phoenix:mcp` checks. The
 CI summary writes required, optional, and skipped gates separately to
 `.ai-logs/tracepilot-ci/summary.json`.
 
+## Readiness And Artifact Commands
+
+Run the readiness doctor before attempting strict proof:
+
+```bash
+npm run doctor:tracepilot
+```
+
+The doctor reports whether local Phoenix, MCP, Cloud Run, and demo prerequisites
+are configured well enough to attempt strict proof. It does not prove a repair
+by itself.
+
+For a target folder, write a sanitized repair artifact and markdown report:
+
+```bash
+npm run tracepilot:check -- --workdir . --output-dir .ai-logs/tracepilot-check
+```
+
+The command runs the TracePilot verification matrix for that folder and writes:
+
+- `.ai-logs/tracepilot-check/repair-artifact.json`
+- `.ai-logs/tracepilot-check/repair-report.md`
+
+These artifacts use the same completed repair artifact builder as the demo
+flows, including redacted command output hashes, dependency-aware failure
+signatures, verification matrix results, confidence, and completion metadata.
+
+## Judge Artifacts
+
+Deterministic evals answer "did the required checks pass?" Judge artifacts
+package the repair and eval evidence for repair-quality review:
+
+```bash
+npm run judge:tracepilot -- \
+  --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json \
+  --eval-report .ai-logs/demo-broken-node-app/result.json \
+  --judge-input-output .ai-logs/tracepilot-judge/judge-input.json \
+  --judge-result-output .ai-logs/tracepilot-judge/judge-result.json
+```
+
+Without `--judge-result-input`, the result is an explicit non-strict
+`mode: "unavailable"` artifact. When an external or live judge has produced a
+validated scored result, pass it through:
+
+```bash
+npm run judge:tracepilot -- \
+  --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json \
+  --eval-report .ai-logs/demo-broken-node-app/result.json \
+  --judge-input-output .ai-logs/tracepilot-judge/judge-input.json \
+  --judge-result-input .ai-logs/tracepilot-judge/scored-result.json \
+  --judge-result-output .ai-logs/tracepilot-judge/judge-result.json
+```
+
+The deterministic and Gemini demo commands also write `judge-input.json` and
+`judge-result.json` next to their report output. Use `--judge-result-input` on
+those demos when you already have a scored judge result that should be bundled
+into the demo report. Judge artifacts are intentionally
+`strictLiveProof: false`; they complement strict Phoenix proof instead of
+replacing it.
+
 ## Phoenix Proof
 
 Run both smoke checks when Phoenix credentials are available:
@@ -220,6 +280,8 @@ Do not paste keys into issue comments, PR descriptions, or terminal logs.
 | Self-introspection           | Phoenix introspection, scheduler tests, and strict demo     | Working                          | Failure path queries Phoenix MCP, selects matching failed span evidence, and degrades when evidence is absent.                                                           |
 | Repair planner               | `packages/core/src/tracepilot/repairPlanner.test.ts`        | Working locally                  | Planner consumes structured trace evidence and emits `gemini_cli.chain.repair_plan`.                                                                                     |
 | Evals                        | `npm run test:scripts`                                      | Working locally                  | Required deterministic eval IDs produce sanitized JSON.                                                                                                                  |
+| Repair artifact command      | `npm run tracepilot:check`                                  | Working locally                  | Writes sanitized JSON/markdown repair artifacts through the shared completed repair artifact builder.                                                                    |
+| Judge artifacts              | `npm run judge:tracepilot`                                  | Working locally                  | Writes sanitized judge input/result artifacts; scored results are validated and non-strict by design.                                                                    |
 | Broken demo                  | `npm run demo:broken-node-app`                              | Working                          | Strict demo passed with Phoenix-visible trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals.                                                            |
 | Live Gemini repair demo      | `npm run demo:gemini-repair-agent`                          | Working locally                  | Gemini 3 repaired three checkout-service failures; failed-tool, causal trace, observed safety block, successful MCP evidence, retry, and eval gates pass.                |
 | Phoenix repair memory replay | `npm run demo:phoenix-repair-memory`                        | Working locally                  | Seed `tracepilot-gemini-repair-1779647335678` and replay `tracepilot-gemini-repair-1779647437009` passed; replay `repair_memory_retrieve` telemetry referenced the seed. |
@@ -268,8 +330,8 @@ rotate them before final public submission.
   automatically production-ready for arbitrary repositories without target
   workspace policy, secret redaction, deterministic verification, and strict
   proof gates passing.
-- The repair planner is deterministic and evidence-driven; it is not a general
-  LLM judge.
+- The repair planner is deterministic and evidence-driven; separate judge
+  artifacts package repair-quality evidence but are not strict live proof.
 - Redaction covers the implemented sensitive patterns, but it is not a complete
   data-loss-prevention product.
 - Full root test execution still needs CI partitioning and timeout hardening.
