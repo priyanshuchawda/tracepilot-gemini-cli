@@ -115,6 +115,26 @@ into the demo report. Judge artifacts are intentionally
 `strictLiveProof: false`; they complement strict Phoenix proof instead of
 replacing it.
 
+## Proof Dashboard
+
+Create a self-contained HTML dashboard when reviewers need to understand the
+repair proof quickly:
+
+```bash
+npm run dashboard:tracepilot -- \
+  --report .ai-logs/demo-broken-node-app/result.json \
+  --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json \
+  --judge-input .ai-logs/tracepilot-judge/judge-input.json \
+  --judge-result .ai-logs/tracepilot-judge/judge-result.json \
+  --output .ai-logs/tracepilot-dashboard/index.html
+```
+
+The dashboard validates and sanitizes the same proof, repair, eval, and judge
+schemas used by the CLI flow. It renders proof level, strict live proof status,
+changed files, patch summaries, deterministic evals, safety status, judge
+scores, and timeline evidence without needing a server. Secret-like input fails
+closed before the HTML file is written.
+
 ## Phoenix Proof
 
 Run both smoke checks when Phoenix credentials are available:
@@ -282,6 +302,7 @@ Do not paste keys into issue comments, PR descriptions, or terminal logs.
 | Evals                        | `npm run test:scripts`                                      | Working locally                  | Required deterministic eval IDs produce sanitized JSON.                                                                                                                  |
 | Repair artifact command      | `npm run tracepilot:check`                                  | Working locally                  | Writes sanitized JSON/markdown repair artifacts through the shared completed repair artifact builder.                                                                    |
 | Judge artifacts              | `npm run judge:tracepilot`                                  | Working locally                  | Writes sanitized judge input/result artifacts; scored results are validated and non-strict by design.                                                                    |
+| Proof dashboard              | `npm run dashboard:tracepilot`                              | Working locally                  | Writes a self-contained sanitized HTML proof viewer from proof, repair, eval, and judge artifacts.                                                                       |
 | Broken demo                  | `npm run demo:broken-node-app`                              | Working                          | Strict demo passed with Phoenix-visible trace `de13112b1dadd28dda63a83365d92344` and all deterministic evals.                                                            |
 | Live Gemini repair demo      | `npm run demo:gemini-repair-agent`                          | Working locally                  | Gemini 3 repaired three checkout-service failures; failed-tool, causal trace, observed safety block, successful MCP evidence, retry, and eval gates pass.                |
 | Phoenix repair memory replay | `npm run demo:phoenix-repair-memory`                        | Working locally                  | Seed `tracepilot-gemini-repair-1779647335678` and replay `tracepilot-gemini-repair-1779647437009` passed; replay `repair_memory_retrieve` telemetry referenced the seed. |
