@@ -126,6 +126,121 @@ describe('scripts/tracepilot-judge-evidence.ts', () => {
     expect(output.criteria).toHaveLength(5);
   }, 30000);
 
+  it('accepts a proof report with a nested eval report', async () => {
+    const { mkdtempSync, readFileSync, writeFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-judge-proof-'));
+    const repairArtifact = path.join(dir, 'repair.json');
+    const proofReport = path.join(dir, 'proof-report.json');
+    const judgeInput = path.join(dir, 'judge-input.json');
+    const judgeResult = path.join(dir, 'judge-result.json');
+    writeFileSync(repairArtifact, JSON.stringify(makeRepairArtifact()));
+    writeFileSync(
+      proofReport,
+      JSON.stringify({
+        ok: true,
+        proofLevel: 'local_offline',
+        strictLiveProof: false,
+        eval: makeEvalReport(),
+      }),
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        'scripts/tracepilot-judge-evidence.ts',
+        '--repair-artifact',
+        repairArtifact,
+        '--eval-report',
+        proofReport,
+        '--judge-input-output',
+        judgeInput,
+        '--judge-result-output',
+        judgeResult,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('JUDGE_MODE: unavailable');
+    const input = JSON.parse(readFileSync(judgeInput, 'utf8'));
+    expect(input).toMatchObject({
+      deterministicEval: {
+        ok: true,
+        passCount: 7,
+        failCount: 0,
+      },
+    });
+  }, 30000);
+
+  it('fails closed when a nested eval report is inconsistent', async () => {
+    const { existsSync, mkdtempSync, writeFileSync } =
+      await vi.importActual<typeof import('node:fs')>('node:fs');
+    const dir = mkdtempSync(path.join(tmpdir(), 'tracepilot-judge-bad-proof-'));
+    const repairArtifact = path.join(dir, 'repair.json');
+    const proofReport = path.join(dir, 'proof-report.json');
+    const judgeInput = path.join(dir, 'judge-input.json');
+    const judgeResult = path.join(dir, 'judge-result.json');
+    writeFileSync(repairArtifact, JSON.stringify(makeRepairArtifact()));
+    writeFileSync(
+      proofReport,
+      JSON.stringify({
+        ok: true,
+        proofLevel: 'local_offline',
+        strictLiveProof: false,
+        eval: {
+          ...makeEvalReport(),
+          ok: true,
+          results: makeEvalReport().results.map(
+            (result: { id: string; status: string }, index: number) =>
+              index === 0
+                ? {
+                    ...result,
+                    status: 'fail',
+                    failureReason: 'command did not complete',
+                  }
+                : result,
+          ),
+        },
+      }),
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        'scripts/tracepilot-judge-evidence.ts',
+        '--repair-artifact',
+        repairArtifact,
+        '--eval-report',
+        proofReport,
+        '--judge-input-output',
+        judgeInput,
+        '--judge-result-output',
+        judgeResult,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(
+      'Failed to write TracePilot judge evidence',
+    );
+    expect(existsSync(judgeInput)).toBe(false);
+    expect(existsSync(judgeResult)).toBe(false);
+  }, 30000);
+
   it('fails closed on secret-like input without writing judge artifacts', async () => {
     const { existsSync, mkdtempSync, writeFileSync } =
       await vi.importActual<typeof import('node:fs')>('node:fs');
