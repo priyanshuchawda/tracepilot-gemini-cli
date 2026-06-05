@@ -32,11 +32,11 @@ import {
   resolveTracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
+import { buildCompletedTracePilotRepairArtifact } from '../packages/core/src/tracepilot/completedRepairArtifact.js';
 import {
   runTracePilotEvals,
   type TracePilotEvalEvidence,
 } from '../packages/core/src/tracepilot/evals.js';
-import { buildTracePilotFailureSignature } from '../packages/core/src/tracepilot/failureSignature.js';
 import {
   describeTracePilotProofLevel,
   isStrictTracePilotProofLevel,
@@ -44,13 +44,6 @@ import {
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
 import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
-import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
-import {
-  completeTracePilotRepairArtifact,
-  createTracePilotRepairArtifact,
-  type TracePilotPatchSummary,
-} from '../packages/core/src/tracepilot/repairReport.js';
-import { classifyTracePilotPatchRisk } from '../packages/core/src/tracepilot/repairRisk.js';
 import type { TracePilotVerificationResult } from '../packages/core/src/tracepilot/verificationMatrix.js';
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 import {
@@ -230,20 +223,11 @@ function buildCompletedRepairArtifact(input: {
   phoenix: PhoenixQueryEvidence;
   startedAt: number;
 }) {
-  const initialPreview = createRedactedOutputPreview(
-    `${input.failed.stdout}\n${input.failed.stderr}`,
-  );
   const retryPreview = createRedactedOutputPreview(
     `${input.retry.stdout}\n${input.retry.stderr}`,
   );
-  const signature = buildTracePilotFailureSignature({
-    command: input.failed.command,
-    exitCode: input.failed.exitCode,
-    outputPreview: initialPreview.preview,
-    outputSha256: initialPreview.sha256,
-  });
   const filesModified = ['src/config.js'];
-  const patches: TracePilotPatchSummary[] = [
+  const patches = [
     {
       file: 'src/config.js',
       linesAdded: 1,
@@ -274,82 +258,50 @@ function buildCompletedRepairArtifact(input: {
       status: input.retry.exitCode === 0 ? 'pass' : 'fail',
     },
   ];
-  const patchRisk = classifyTracePilotPatchRisk({
-    filesModified,
-    linesAdded: 1,
-    linesDeleted: 1,
-  });
-  const plannedArtifact = createTracePilotRepairArtifact({
-    schemaVersion: 1,
+  return buildCompletedTracePilotRepairArtifact({
     sessionId: input.sessionId,
-    phase: 'planned',
-    failure: {
-      summary: `Fixture test failed in ${input.failed.command}`,
-      rootCause: signature.taxonomy,
-      signature,
+    failedCommand: {
+      command: input.failed.command,
+      exitCode: input.failed.exitCode,
+      output: `${input.failed.stdout}\n${input.failed.stderr}`,
     },
-    phoenix: {
-      tracesConsulted: input.phoenix.traceId ? [input.phoenix.traceId] : [],
-      mcpQueries: [
-        {
-          serverName: 'phoenix',
-          toolName: 'get-spans',
-          arguments: {
-            sessionId: input.sessionId,
-            names: ['gemini_cli.tool.shell'],
-          },
-          resultCount: input.phoenix.visible ? 1 : 0,
-          status: input.phoenix.visible
-            ? 'ok'
-            : input.phoenix.attempted
-              ? 'error'
-              : 'skipped',
-          reason: input.phoenix.reason,
-        },
-      ],
+    retryCommand: {
+      command: input.retry.command,
+      exitCode: input.retry.exitCode,
+      output: `${input.retry.stdout}\n${input.retry.stderr}`,
     },
-    repair: {
-      selectedStrategy: [
-        `Set the default API base URL to ${EXPECTED_API_BASE_URL}.`,
-        'Rerun the fixture test after the patch.',
-      ],
-      historicalMatches: [],
-      patches: [],
-      filesModified: [],
-    },
-    safety: {
-      risk: patchRisk,
-      rollbackStrategy: ['Restore examples/broken-node-app/src/config.js.'],
-    },
-    verification: {
-      matrix: [],
-      regressionConfidence: 0,
-    },
-    confidence: calculateTracePilotRepairConfidence({
-      phoenixEvidenceAvailable: input.phoenix.visible,
-      verificationCoverageScore: input.retry.exitCode === 0 ? 1 : 0.4,
-      patchMinimalityScore: 1,
-      riskLevel: patchRisk.level,
-      regressionPassed: input.retry.exitCode === 0,
-    }),
-    metrics: {
-      repairDurationMs: Date.now() - input.startedAt,
-      retriesRequired: 0,
-      unsafeCommandsBlocked: 0,
-    },
-  });
-  return completeTracePilotRepairArtifact(plannedArtifact, {
     filesModified,
     patches,
+    selectedStrategy: [
+      `Set the default API base URL to ${EXPECTED_API_BASE_URL}.`,
+      'Rerun the fixture test after the patch.',
+    ],
+    rollbackStrategy: ['Restore examples/broken-node-app/src/config.js.'],
     verificationMatrix,
-    retryMetadata: {
-      attempts: 1,
-      retryCommands: [input.retry.command],
-      finalExitCode: input.retry.exitCode,
-    },
+    phoenixEvidenceAvailable: input.phoenix.visible,
+    phoenixTracesConsulted: input.phoenix.traceId
+      ? [input.phoenix.traceId]
+      : [],
+    phoenixMcpQueries: [
+      {
+        serverName: 'phoenix',
+        toolName: 'get-spans',
+        arguments: {
+          sessionId: input.sessionId,
+          names: ['gemini_cli.tool.shell'],
+        },
+        resultCount: input.phoenix.visible ? 1 : 0,
+        status: input.phoenix.visible
+          ? 'ok'
+          : input.phoenix.attempted
+            ? 'error'
+            : 'skipped',
+        reason: input.phoenix.reason,
+      },
+    ],
     repairDurationMs: Date.now() - input.startedAt,
     completedAt: new Date().toISOString(),
-    rollbackStrategy: ['Restore examples/broken-node-app/src/config.js.'],
+    failureSummary: `Fixture test failed in ${input.failed.command}`,
   });
 }
 
