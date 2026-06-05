@@ -46,6 +46,7 @@ describe('scripts/tracepilot-doctor.ts', () => {
     const written = JSON.parse(readFileSync(output, 'utf8'));
     expect(report.localDeterministicReady).toBe(true);
     expect(report.strictLiveReady).toBe(false);
+    expect(report.npm.available).toBe(true);
     expect(report.commandSurface).toMatchObject({
       requiredScriptsPresent: true,
       scripts: {

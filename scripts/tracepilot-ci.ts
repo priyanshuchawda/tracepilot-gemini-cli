@@ -21,6 +21,7 @@ import {
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
 import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
+import { resolveTracePilotNpmCommand } from './tracepilot-command-resolution.js';
 
 type GateTier = 'fast' | 'medium' | 'full';
 type GateStatus = 'passed' | 'failed' | 'skipped';
@@ -406,13 +407,8 @@ function resolveCommand(
   executable: string,
   args: string[],
 ): { executable: string; args: string[] } {
-  const npmExecPath =
-    process.env['TRACEPILOT_CI_NPM_EXEC_PATH'] || process.env['npm_execpath'];
-  if (executable === 'npm' && npmExecPath) {
-    return {
-      executable: process.execPath,
-      args: [npmExecPath, ...args],
-    };
+  if (executable === 'npm') {
+    return resolveTracePilotNpmCommand(args);
   }
   return { executable, args };
 }
