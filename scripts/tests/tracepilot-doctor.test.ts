@@ -54,6 +54,7 @@ describe('scripts/tracepilot-doctor.ts', () => {
         'doctor:tracepilot': true,
         'eval:tracepilot': true,
         'judge:tracepilot': true,
+        'dashboard:tracepilot': true,
         'demo:broken-node-app': true,
         'demo:gemini-repair-agent': true,
       },
@@ -136,6 +137,7 @@ describe('scripts/tracepilot-doctor.ts', () => {
       'Recommended command: npm run tracepilot:check',
       'Recommended command: npm run demo:broken-node-app:offline',
       'Recommended command: npm run demo:gemini-repair-agent:offline',
+      'Recommended command: npm run dashboard:tracepilot -- --report .ai-logs/demo-broken-node-app/result.json --output .ai-logs/tracepilot-dashboard/index.html',
     ]);
   }, 30000);
 });
