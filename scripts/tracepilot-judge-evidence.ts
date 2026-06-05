@@ -6,11 +6,13 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { validateTracePilotJudgeResult } from '../packages/core/src/tracepilot/judgeEvidence.js';
 import { validateTracePilotEvalReport } from '../packages/core/src/tracepilot/evals.js';
 import { validateTracePilotRepairArtifact } from '../packages/core/src/tracepilot/repairReport.js';
 import { redactSensitiveText } from '../packages/core/src/telemetry/sanitize.js';
-import { writeTracePilotJudgeArtifacts } from './tracepilot-judge-artifacts.js';
+import {
+  readTracePilotJudgeResultFile,
+  writeTracePilotJudgeArtifacts,
+} from './tracepilot-judge-artifacts.js';
 
 interface CliOptions {
   repairArtifact?: string;
@@ -51,9 +53,7 @@ async function main(argv: string[]): Promise<number> {
       await readJsonFile(options.evalReport),
     );
     const judgeResult = options.judgeResultInput
-      ? validateTracePilotJudgeResult(
-          await readJsonFile(options.judgeResultInput),
-        )
+      ? await readTracePilotJudgeResultFile(options.judgeResultInput)
       : undefined;
     const artifacts = await writeTracePilotJudgeArtifacts({
       repairArtifact: repair,
