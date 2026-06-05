@@ -5,7 +5,10 @@
  */
 
 import { createRedactedOutputPreview } from '../telemetry/sanitize.js';
-import { buildTracePilotFailureSignature } from './failureSignature.js';
+import {
+  buildTracePilotFailureSignature,
+  type TracePilotFailureSignature,
+} from './failureSignature.js';
 import {
   calculateTracePilotRepairConfidence,
   type TracePilotConfidenceInput,
@@ -37,10 +40,18 @@ export interface BuildCompletedTracePilotRepairArtifactInput {
   verificationMatrix: TracePilotVerificationResult[];
   phoenixEvidenceAvailable: boolean;
   phoenixTracesConsulted: string[];
-  phoenixMcpQueries: TracePilotMcpQueryRecord[];
+  phoenixMcpQueries:
+    | TracePilotMcpQueryRecord[]
+    | ((signature: TracePilotFailureSignature) => TracePilotMcpQueryRecord[]);
   repairDurationMs?: number;
   completedAt?: string;
   failureSummary?: string;
+  failureSignatureDependencies?: Record<string, string>;
+  completion?: {
+    attempts?: number;
+    retryCommands?: string[];
+    finalExitCode?: number;
+  };
   confidence?: Partial<
     Pick<
       TracePilotConfidenceInput,
@@ -58,6 +69,7 @@ export function buildCompletedTracePilotRepairArtifact(
     exitCode: input.failedCommand.exitCode,
     outputPreview: failedPreview.preview,
     outputSha256: failedPreview.sha256,
+    dependencies: input.failureSignatureDependencies,
   });
   const patchRisk = classifyTracePilotPatchRisk({
     filesModified: input.filesModified,
@@ -70,6 +82,10 @@ export function buildCompletedTracePilotRepairArtifact(
   const verificationPassed = input.verificationMatrix.every(
     (check) => !check.required || check.status === 'pass',
   );
+  const phoenixMcpQueries =
+    typeof input.phoenixMcpQueries === 'function'
+      ? input.phoenixMcpQueries(signature)
+      : input.phoenixMcpQueries;
   const plannedArtifact = createTracePilotRepairArtifact({
     schemaVersion: 1,
     sessionId: input.sessionId,
@@ -83,7 +99,7 @@ export function buildCompletedTracePilotRepairArtifact(
     },
     phoenix: {
       tracesConsulted: input.phoenixTracesConsulted,
-      mcpQueries: input.phoenixMcpQueries,
+      mcpQueries: phoenixMcpQueries,
     },
     repair: {
       selectedStrategy: input.selectedStrategy,
@@ -121,9 +137,12 @@ export function buildCompletedTracePilotRepairArtifact(
     patches: input.patches,
     verificationMatrix: input.verificationMatrix,
     retryMetadata: {
-      attempts: 1,
-      retryCommands: [input.retryCommand.command],
-      finalExitCode: input.retryCommand.exitCode,
+      attempts: input.completion?.attempts ?? 1,
+      retryCommands: input.completion?.retryCommands ?? [
+        input.retryCommand.command,
+      ],
+      finalExitCode:
+        input.completion?.finalExitCode ?? input.retryCommand.exitCode,
     },
     repairDurationMs: input.repairDurationMs,
     completedAt: input.completedAt,

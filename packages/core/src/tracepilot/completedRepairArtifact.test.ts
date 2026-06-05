@@ -161,4 +161,81 @@ describe('buildCompletedTracePilotRepairArtifact', () => {
       'regression_not_verified',
     ]);
   });
+
+  it('preserves dependency signatures and multi-command completion metadata', () => {
+    const artifact = buildCompletedTracePilotRepairArtifact({
+      sessionId: 'session-matrix-builder',
+      failedCommand: {
+        command: 'tracepilot verification matrix',
+        exitCode: 0,
+        output: 'TracePilot verification matrix passed.',
+      },
+      retryCommand: {
+        command: 'tracepilot verification matrix',
+        exitCode: 0,
+        output: 'ok',
+      },
+      filesModified: [],
+      patches: [],
+      selectedStrategy: [
+        'No repair required; persist successful verification evidence.',
+      ],
+      rollbackStrategy: ['No patch applied.'],
+      verificationMatrix: [
+        {
+          id: 'typecheck',
+          command: 'node tsc --noEmit',
+          required: true,
+          reason: 'verify TypeScript stability',
+          status: 'pass',
+          exitCode: 0,
+        },
+        {
+          id: 'tests',
+          command: 'node vitest run',
+          required: true,
+          reason: 'verify regression tests',
+          status: 'pass',
+          exitCode: 0,
+        },
+      ],
+      phoenixEvidenceAvailable: true,
+      phoenixTracesConsulted: [],
+      phoenixMcpQueries: (signature) => [
+        {
+          serverName: 'phoenix',
+          toolName: 'get-spans',
+          arguments: {
+            mode: 'local-verification-artifact',
+            signatureId: signature.id,
+          },
+          resultCount: 0,
+          status: 'ok',
+        },
+      ],
+      failureSignatureDependencies: {
+        typescript: '^5.0.0',
+        vitest: '^3.0.0',
+      },
+      completion: {
+        attempts: 1,
+        retryCommands: ['node tsc --noEmit', 'node vitest run'],
+        finalExitCode: 0,
+      },
+    });
+
+    expect(artifact.failure.signature.dependencies).toMatchObject({
+      typescript: '^5.0.0',
+      vitest: '^3.0.0',
+    });
+    expect(artifact.phoenix.mcpQueries[0]?.arguments).toMatchObject({
+      signatureId: artifact.failure.signature.id,
+    });
+    expect(artifact.completion).toMatchObject({
+      attempts: 1,
+      retryCommands: ['node tsc --noEmit', 'node vitest run'],
+      finalExitCode: 0,
+      verificationPassed: true,
+    });
+  });
 });
