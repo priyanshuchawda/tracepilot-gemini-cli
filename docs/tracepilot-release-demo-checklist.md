@@ -3,6 +3,41 @@
 Use this checklist before recording, submitting, or presenting TracePilot. It is
 designed to prevent demo polish from hiding unverified Phoenix integration.
 
+## Judging Video Storyboard
+
+Target a short, evidence-first video. The judges should understand that
+TracePilot is useful because it turns an agent repair from "trust the terminal"
+into a trace-backed, safety-checked, replayable proof bundle.
+
+Recommended order:
+
+1. Problem statement: show the broken checkout-service or broken-node fixture
+   and say the normal agent failure mode is hard to audit after the fact.
+2. Failed command: run or show the failed test and point out the session ID that
+   will connect terminal output to Phoenix evidence.
+3. Phoenix self-introspection: show the Phoenix trace or MCP proof line proving
+   the failed tool span was exported, visible, and queried by the agent.
+4. Gemini repair: show the changed files count and the small patch summary, not
+   a long diff scroll.
+5. Safety gate: show the destructive-command block/eval line so reviewers see
+   TracePilot is not just optimizing for "make tests pass".
+6. Retry proof: show the passing retry command and deterministic eval status.
+7. Proof dashboard: open `.ai-logs/tracepilot-dashboard/index.html` and show the
+   proof level, strict-live flag, timeline, changed files, judge score/status,
+   and safety panel in one screen.
+8. Usefulness claim: close with the concrete value: faster repair review,
+   auditable Phoenix evidence, safer automation, and judge-ready artifacts.
+
+Avoid spending time on architecture diagrams before the proof. If time remains,
+show architecture after the dashboard: Gemini CLI emits spans, Phoenix stores
+them, MCP retrieves them, the repair planner uses them, evals and judge
+artifacts validate the outcome, and the dashboard makes the evidence readable.
+
+Strict submission footage should use `demo:gemini-repair-agent`,
+`demo:phoenix-repair-memory`, and Phoenix MCP proof lines. Offline fallback
+footage may show the dashboard and deterministic flow, but it must explicitly
+say `strictLiveProof=false` and avoid claiming live Phoenix self-introspection.
+
 ## Required Before Strict Demo
 
 - `npm ci` completed on a clean checkout.
