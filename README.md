@@ -105,6 +105,7 @@ npm run smoke:phoenix
 npm run smoke:phoenix:mcp
 npm run demo:broken-node-app
 npm run judge:tracepilot -- --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --eval-report .ai-logs/demo-broken-node-app/result.json --judge-input-output .ai-logs/judge-input.json --judge-result-output .ai-logs/judge-result.json
+npm run dashboard:tracepilot -- --report .ai-logs/demo-broken-node-app/result.json --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --judge-input .ai-logs/judge-input.json --judge-result .ai-logs/judge-result.json
 npm run smoke:cloud-run:local
 ```
 
@@ -120,7 +121,8 @@ folder. `judge:tracepilot` turns a repair artifact plus deterministic eval
 report into `judge-input.json` and `judge-result.json`; supplied scored judge
 results may also be bundled by demo commands with `--judge-result-input`. Judge
 artifacts are repair-quality evidence, not a replacement for strict Phoenix
-proof.
+proof. `dashboard:tracepilot` renders a self-contained sanitized HTML proof
+viewer for demos and judging.
 
 ## Environment
 
@@ -150,6 +152,7 @@ transcripts should be rotated before public submission.
 | Broken repo repair demo    | Working                          | Strict demo exported/queryed trace evidence and passed retry tests.                                |
 | Redaction                  | Working for implemented patterns | Sanitizer, eval, and demo paths redact secrets before traces/reports.                              |
 | Command safety gate        | Working                          | Blocks destructive and credential-dumping commands in policy tests.                                |
+| Proof dashboard            | Working locally                  | Renders sanitized proof, repair, eval, and judge artifacts as self-contained HTML.                 |
 | Cloud Run hosted URL       | Not currently deployed           | Redeploy only with approval, then run `npm run smoke:cloud-run -- --url "$CLOUD_RUN_SERVICE_URL"`. |
 
 The GitHub repository is public. Keep public claims tied to verified evidence:
