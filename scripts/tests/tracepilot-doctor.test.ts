@@ -107,4 +107,35 @@ describe('scripts/tracepilot-doctor.ts', () => {
     expect(stdout).not.toContain('AIzaDemoSecret');
     expect(stdout).not.toContain('px-demo-secret');
   }, 30000);
+
+  it('prints every recommended command in human output', () => {
+    const stdout = execFileSync(
+      process.execPath,
+      ['--import', 'tsx', 'scripts/tracepilot-doctor.ts'],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          GEMINI_API_KEY: '',
+          PHOENIX_API_KEY: '',
+          PHOENIX_HOST: '',
+          PHOENIX_BASE_URL: '',
+          PHOENIX_COLLECTOR_ENDPOINT: '',
+          PHOENIX_PROJECT: '',
+        },
+        stdio: 'pipe',
+      },
+    );
+
+    const recommendedLines = stdout
+      .split('\n')
+      .filter((line) => line.startsWith('Recommended command: '));
+    expect(recommendedLines).toEqual([
+      'Recommended command: npm run ci:tracepilot',
+      'Recommended command: npm run tracepilot:check',
+      'Recommended command: npm run demo:broken-node-app:offline',
+      'Recommended command: npm run demo:gemini-repair-agent:offline',
+    ]);
+  }, 30000);
 });

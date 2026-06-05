@@ -156,11 +156,14 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
     recommendedCommands: strictLiveReady
       ? [
           'npm run ci:tracepilot -- --tier=medium',
+          'npm run tracepilot:check',
           'npm run smoke:phoenix:mcp',
           'npm run demo:gemini-repair-agent',
+          'npm run judge:tracepilot -- --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --eval-report .ai-logs/demo-gemini-repair-agent/result.json --judge-input-output .ai-logs/tracepilot-judge/judge-input.json --judge-result-output .ai-logs/tracepilot-judge/judge-result.json',
         ]
       : [
           'npm run ci:tracepilot',
+          'npm run tracepilot:check',
           'npm run demo:broken-node-app:offline',
           'npm run demo:gemini-repair-agent:offline',
         ],
@@ -305,7 +308,9 @@ function printHumanSummary(report: DoctorReport): void {
     console.log(`${check.status.toUpperCase()} ${check.id}: ${check.summary}`);
   }
   console.log(`Phoenix MCP package: ${report.phoenix.mcpPackage}`);
-  console.log(`Recommended command: ${report.recommendedCommands[0]}`);
+  for (const command of report.recommendedCommands) {
+    console.log(`Recommended command: ${command}`);
+  }
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
