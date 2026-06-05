@@ -91,4 +91,74 @@ describe('buildCompletedTracePilotRepairArtifact', () => {
     expect(JSON.stringify(artifact)).not.toContain('sk-proj-secret');
     expect(JSON.stringify(artifact)).toContain('[REDACTED]');
   });
+
+  it('allows callers to preserve degraded confidence scoring semantics', () => {
+    const artifact = buildCompletedTracePilotRepairArtifact({
+      sessionId: 'session-degraded-builder',
+      failedCommand: {
+        command: 'node --test',
+        exitCode: 1,
+        output: 'checkout service tests failed',
+      },
+      retryCommand: {
+        command: 'node --test',
+        exitCode: 0,
+        output: 'ok',
+      },
+      filesModified: ['src/config.js'],
+      patches: [
+        {
+          file: 'src/config.js',
+          linesAdded: 1,
+          linesDeleted: 1,
+          description: 'Patch config.',
+        },
+      ],
+      selectedStrategy: ['Patch config.', 'Rerun tests.'],
+      rollbackStrategy: ['Restore fixture files.'],
+      verificationMatrix: [
+        {
+          id: 'failed_command',
+          command: 'node --test',
+          required: true,
+          reason: 'prove retry passes',
+          status: 'pass',
+          exitCode: 0,
+        },
+        {
+          id: 'regression_scope',
+          required: true,
+          reason: 'live Phoenix evidence was unavailable',
+          status: 'skipped',
+        },
+      ],
+      phoenixEvidenceAvailable: false,
+      phoenixTracesConsulted: [],
+      phoenixMcpQueries: [
+        {
+          serverName: 'phoenix',
+          toolName: 'get-spans',
+          arguments: { sessionId: 'session-degraded-builder' },
+          resultCount: 0,
+          status: 'skipped',
+          reason: 'Phoenix env missing.',
+        },
+      ],
+      confidence: {
+        verificationCoverageScore: 0.5,
+        patchMinimalityScore: 0.5,
+        regressionPassed: false,
+      },
+    });
+
+    expect(artifact.phase).toBe('applied');
+    expect(artifact.confidence.components).toMatchObject({
+      verificationCoverage: 0.5,
+      patchMinimality: 0.5,
+    });
+    expect(artifact.confidence.cappedBy).toEqual([
+      'missing_phoenix_evidence',
+      'regression_not_verified',
+    ]);
+  });
 });

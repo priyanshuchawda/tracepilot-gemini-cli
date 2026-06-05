@@ -6,7 +6,10 @@
 
 import { createRedactedOutputPreview } from '../telemetry/sanitize.js';
 import { buildTracePilotFailureSignature } from './failureSignature.js';
-import { calculateTracePilotRepairConfidence } from './repairConfidence.js';
+import {
+  calculateTracePilotRepairConfidence,
+  type TracePilotConfidenceInput,
+} from './repairConfidence.js';
 import {
   completeTracePilotRepairArtifact,
   createTracePilotRepairArtifact,
@@ -38,6 +41,12 @@ export interface BuildCompletedTracePilotRepairArtifactInput {
   repairDurationMs?: number;
   completedAt?: string;
   failureSummary?: string;
+  confidence?: Partial<
+    Pick<
+      TracePilotConfidenceInput,
+      'verificationCoverageScore' | 'patchMinimalityScore' | 'regressionPassed'
+    >
+  >;
 }
 
 export function buildCompletedTracePilotRepairArtifact(
@@ -92,10 +101,13 @@ export function buildCompletedTracePilotRepairArtifact(
     },
     confidence: calculateTracePilotRepairConfidence({
       phoenixEvidenceAvailable: input.phoenixEvidenceAvailable,
-      verificationCoverageScore: verificationPassed ? 1 : 0.4,
-      patchMinimalityScore: 1,
+      verificationCoverageScore:
+        input.confidence?.verificationCoverageScore ??
+        (verificationPassed ? 1 : 0.4),
+      patchMinimalityScore: input.confidence?.patchMinimalityScore ?? 1,
       riskLevel: patchRisk.level,
-      regressionPassed: verificationPassed,
+      regressionPassed:
+        input.confidence?.regressionPassed ?? verificationPassed,
     }),
     metrics: {
       repairDurationMs: input.repairDurationMs ?? 0,

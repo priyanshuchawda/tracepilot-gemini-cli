@@ -42,6 +42,7 @@ import {
   resolveTracePilotPhoenixEnv,
 } from '../packages/core/src/telemetry/phoenixMcpUtils.js';
 import { createRedactedOutputPreview } from '../packages/core/src/telemetry/sanitize.js';
+import { buildCompletedTracePilotRepairArtifact } from '../packages/core/src/tracepilot/completedRepairArtifact.js';
 import {
   runTracePilotEvals,
   type TracePilotEvalEvidence,
@@ -54,14 +55,8 @@ import {
   type TracePilotProofLevel,
 } from '../packages/core/src/tracepilot/proofLevel.js';
 import { stableTracePilotProofReportJson } from '../packages/core/src/tracepilot/proofReport.js';
-import { calculateTracePilotRepairConfidence } from '../packages/core/src/tracepilot/repairConfidence.js';
 import { createTracePilotRepairFingerprint } from '../packages/core/src/tracepilot/repairMemory.js';
-import {
-  completeTracePilotRepairArtifact,
-  createTracePilotRepairArtifact,
-  type TracePilotPatchSummary,
-} from '../packages/core/src/tracepilot/repairReport.js';
-import { classifyTracePilotPatchRisk } from '../packages/core/src/tracepilot/repairRisk.js';
+import type { TracePilotPatchSummary } from '../packages/core/src/tracepilot/repairReport.js';
 import type { TracePilotVerificationResult } from '../packages/core/src/tracepilot/verificationMatrix.js';
 import { classifyTracePilotCommandRisk } from '../packages/core/src/policy/tracepilot-command-risk.js';
 import {
@@ -214,7 +209,6 @@ async function main(argv: string[]): Promise<number> {
     changedFiles,
     patches: summarizePatchSummaries(before, after, changedFiles),
     phoenix,
-    verifiedOutcome,
     localRepairOk,
     strictEvidenceOk,
     evalOk: evalReport.ok,
@@ -286,32 +280,14 @@ function buildCompletedRepairArtifact(input: {
   changedFiles: string[];
   patches: TracePilotPatchSummary[];
   phoenix: PhoenixSessionEvidence;
-  verifiedOutcome: VerifiedRepairOutcome;
   localRepairOk: boolean;
   strictEvidenceOk: boolean;
   evalOk: boolean;
   startedAt: number;
 }) {
-  const initialOutput = createRedactedOutputPreview(
-    `${input.initial.stdout}\n${input.initial.stderr}`,
-  );
   const retryOutput = createRedactedOutputPreview(
     `${input.retry.stdout}\n${input.retry.stderr}`,
   );
-  const signature = buildTracePilotFailureSignature({
-    command: input.initial.command,
-    exitCode: input.initial.exitCode,
-    outputPreview: initialOutput.preview,
-    outputSha256: initialOutput.sha256,
-  });
-  const patchRisk = classifyTracePilotPatchRisk({
-    filesModified: input.changedFiles,
-    linesAdded: input.patches.reduce((sum, patch) => sum + patch.linesAdded, 0),
-    linesDeleted: input.patches.reduce(
-      (sum, patch) => sum + patch.linesDeleted,
-      0,
-    ),
-  });
   const verificationMatrix: TracePilotVerificationResult[] = [
     {
       id: 'failed_command',
@@ -341,82 +317,60 @@ function buildCompletedRepairArtifact(input: {
             : 'fail',
     },
   ];
-  const plannedArtifact = createTracePilotRepairArtifact({
-    schemaVersion: 1,
+  return buildCompletedTracePilotRepairArtifact({
     sessionId: input.sessionId,
-    phase: 'planned',
-    failure: {
-      summary: `Checkout-service fixture failed in ${input.initial.command}`,
-      rootCause: signature.taxonomy,
-      signature,
+    failedCommand: {
+      command: input.initial.command,
+      exitCode: input.initial.exitCode,
+      output: `${input.initial.stdout}\n${input.initial.stderr}`,
     },
-    phoenix: {
-      tracesConsulted: input.phoenix.traceId ? [input.phoenix.traceId] : [],
-      mcpQueries: [
-        {
-          serverName: 'phoenix',
-          toolName: 'get-spans',
-          arguments: {
-            sessionId: input.sessionId,
-            expectedSpans: [
-              GeminiCliOperation.ToolShell,
-              GeminiCliOperation.ToolPhoenixMcp,
-              GeminiCliOperation.SelfIntrospection,
-            ],
-          },
-          resultCount: input.phoenix.visible ? 1 : 0,
-          status: input.phoenix.visible
-            ? 'ok'
-            : input.phoenix.attempted
-              ? 'error'
-              : 'skipped',
-          reason: input.phoenix.reason,
-        },
-      ],
+    retryCommand: {
+      command: input.retry.command,
+      exitCode: input.retry.exitCode,
+      output: `${input.retry.stdout}\n${input.retry.stderr}`,
     },
-    repair: {
-      selectedStrategy: [
-        'Apply the minimal checkout-service source repair.',
-        'Rerun the fixture tests and deterministic evals.',
-        'Record verified repair outcome only when strict Phoenix evidence passes.',
-      ],
-      historicalMatches: [],
-      patches: [],
-      filesModified: [],
-    },
-    safety: {
-      risk: patchRisk,
-      rollbackStrategy: ['Restore changed checkout-service fixture files.'],
-    },
-    verification: {
-      matrix: [],
-      regressionConfidence: 0,
-    },
-    confidence: calculateTracePilotRepairConfidence({
-      phoenixEvidenceAvailable: input.strictEvidenceOk,
-      verificationCoverageScore: input.evalOk ? 1 : 0.5,
-      patchMinimalityScore: input.localRepairOk ? 1 : 0.5,
-      riskLevel: patchRisk.level,
-      regressionPassed: input.retry.exitCode === 0 && input.evalOk,
-    }),
-    metrics: {
-      repairDurationMs: Date.now() - input.startedAt,
-      retriesRequired: input.verifiedOutcome.attempted ? 1 : 0,
-      unsafeCommandsBlocked: 0,
-    },
-  });
-  return completeTracePilotRepairArtifact(plannedArtifact, {
     filesModified: input.changedFiles,
     patches: input.patches,
+    selectedStrategy: [
+      'Apply the minimal checkout-service source repair.',
+      'Rerun the fixture tests and deterministic evals.',
+      'Record verified repair outcome only when strict Phoenix evidence passes.',
+    ],
+    rollbackStrategy: ['Restore changed checkout-service fixture files.'],
     verificationMatrix,
-    retryMetadata: {
-      attempts: 1,
-      retryCommands: [input.retry.command],
-      finalExitCode: input.retry.exitCode,
-    },
+    phoenixEvidenceAvailable: input.strictEvidenceOk,
+    phoenixTracesConsulted: input.phoenix.traceId
+      ? [input.phoenix.traceId]
+      : [],
+    phoenixMcpQueries: [
+      {
+        serverName: 'phoenix',
+        toolName: 'get-spans',
+        arguments: {
+          sessionId: input.sessionId,
+          expectedSpans: [
+            GeminiCliOperation.ToolShell,
+            GeminiCliOperation.ToolPhoenixMcp,
+            GeminiCliOperation.SelfIntrospection,
+          ],
+        },
+        resultCount: input.phoenix.visible ? 1 : 0,
+        status: input.phoenix.visible
+          ? 'ok'
+          : input.phoenix.attempted
+            ? 'error'
+            : 'skipped',
+        reason: input.phoenix.reason,
+      },
+    ],
     repairDurationMs: Date.now() - input.startedAt,
     completedAt: new Date().toISOString(),
-    rollbackStrategy: ['Restore changed checkout-service fixture files.'],
+    failureSummary: `Checkout-service fixture failed in ${input.initial.command}`,
+    confidence: {
+      verificationCoverageScore: input.evalOk ? 1 : 0.5,
+      patchMinimalityScore: input.localRepairOk ? 1 : 0.5,
+      regressionPassed: input.retry.exitCode === 0 && input.evalOk,
+    },
   });
 }
 
