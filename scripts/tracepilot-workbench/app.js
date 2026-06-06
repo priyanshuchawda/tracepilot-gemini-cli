@@ -25,6 +25,7 @@ const elements = {
   modeButtons: [...document.querySelectorAll('.mode-button')],
   modeIndicator: document.querySelector('#mode-indicator'),
   scenario: document.querySelector('#scenario-select'),
+  scenarioLabel: document.querySelector('#scenario-label'),
   runsList: document.querySelector('#runs-list'),
   runTitle: document.querySelector('#run-title'),
   refreshButton: document.querySelector('#refresh-button'),
@@ -82,6 +83,8 @@ elements.modeButtons.forEach((button) => {
       state.mode === 'live' ? 'Live' : 'Controlled';
   });
 });
+
+elements.scenario.addEventListener('change', updateScenarioLabel);
 
 elements.form.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -189,6 +192,8 @@ async function loadRun(runId) {
   );
   elements.runTitle.textContent = run.prompt;
   elements.input.value = run.prompt;
+  elements.scenario.value = run.scenario;
+  updateScenarioLabel();
   renderActivity(run.prompt);
   updateEvidence(run);
   setBusy(run.status === 'queued' || run.status === 'running');
@@ -284,6 +289,7 @@ function updateEvidenceFromEvents() {
   const gates = [
     ['Safety', 'Safety gate'],
     ['Retry', 'Verification retry'],
+    ['Stress', 'Repeated stress verification'],
     ['Evals', 'Deterministic evals'],
     ['Phoenix', 'Phoenix MCP introspection'],
   ];
@@ -355,6 +361,13 @@ function titleCase(value) {
   return String(value)
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function updateScenarioLabel() {
+  elements.scenarioLabel.textContent =
+    elements.scenario.value === 'idempotency-race'
+      ? 'Duplicate settlement race'
+      : 'Checkout webhook repair';
 }
 
 function formatTime(value) {

@@ -22,6 +22,7 @@ dotenv.config({ quiet: true });
 
 type RunMode = 'controlled' | 'live';
 type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
+type BenchmarkScenario = 'checkout-service' | 'idempotency-race';
 
 interface WorkbenchEvent {
   seq: number;
@@ -37,7 +38,7 @@ interface WorkbenchRun {
   id: string;
   prompt: string;
   mode: RunMode;
-  scenario: 'checkout-service';
+  scenario: BenchmarkScenario;
   status: RunStatus;
   createdAt: string;
   completedAt?: string;
@@ -90,6 +91,13 @@ export function createTracePilotWorkbenchServer(
               difficulty: 'advanced',
               summary:
                 'Configuration, signature verification, and credential-redaction failures.',
+            },
+            {
+              id: 'idempotency-race',
+              name: 'Duplicate settlement race',
+              difficulty: 'expert',
+              summary:
+                'A non-atomic idempotency check exposed only through causal execution evidence.',
             },
           ],
         });
@@ -284,15 +292,20 @@ async function executeBenchmarkRun({
     type: 'tool',
     title: 'Reproduce benchmark failure',
     detail:
-      'Running the checkout-service verification suite in a disposable workspace.',
+      run.scenario === 'idempotency-race'
+        ? 'Running the duplicate-delivery invariant check in a disposable workspace.'
+        : 'Running the checkout-service verification suite in a disposable workspace.',
     status: 'running',
     data: { command: 'node --test' },
   });
 
+  const isRace = run.scenario === 'idempotency-race';
   const args = [
     '--import',
     'tsx',
-    'scripts/demo-gemini-repair-agent.ts',
+    isRace
+      ? 'scripts/demo-idempotency-race-repair.ts'
+      : 'scripts/demo-gemini-repair-agent.ts',
     '--workdir',
     workspace,
     '--output',
@@ -301,10 +314,14 @@ async function executeBenchmarkRun({
     run.prompt,
   ];
   if (run.mode === 'controlled') {
+    if (!isRace) {
+      args.push('--allow-missing-phoenix');
+    }
     args.push(
-      '--allow-missing-phoenix',
       '--agent-script',
-      'scripts/testing/fake-checkout-repair-agent.mjs',
+      isRace
+        ? 'scripts/testing/fake-idempotency-repair-agent.mjs'
+        : 'scripts/testing/fake-checkout-repair-agent.mjs',
     );
   } else {
     args.push('--env-file', path.resolve('.env'));
@@ -354,9 +371,14 @@ function publishProofLine(line: string, emit: RunContext['emit']): void {
       title: 'Phoenix MCP introspection',
     },
     CAUSAL_TRACE: { type: 'evidence', title: 'Causal trace' },
+    TRACE_EVIDENCE: { type: 'evidence', title: 'Race trace evidence' },
     SAFETY_BLOCK: { type: 'evidence', title: 'Safety gate' },
     FILES_CHANGED: { type: 'tool', title: 'Patch applied' },
     RETRY_TEST: { type: 'tool', title: 'Verification retry' },
+    STRESS_VERIFICATION: {
+      type: 'evidence',
+      title: 'Repeated stress verification',
+    },
     EVALS: { type: 'evidence', title: 'Deterministic evals' },
     PROOF_LEVEL: { type: 'result', title: 'Proof level' },
     SESSION_ID: { type: 'status', title: 'Trace session' },
@@ -368,7 +390,9 @@ function publishProofLine(line: string, emit: RunContext['emit']): void {
   }
   const normalized = remainder.toUpperCase();
   const status =
-    normalized.includes('PASS') || normalized.includes('LIVE_')
+    label === 'TRACE_EVIDENCE' ||
+    normalized.includes('PASS') ||
+    normalized.includes('LIVE_')
       ? 'pass'
       : normalized.includes('FAIL')
         ? 'fail'
@@ -509,9 +533,13 @@ function validateMode(value: unknown): RunMode {
   throw new Error('Mode must be controlled or live.');
 }
 
-function validateScenario(value: unknown): 'checkout-service' {
-  if (value === undefined || value === 'checkout-service') {
-    return 'checkout-service';
+function validateScenario(value: unknown): BenchmarkScenario {
+  if (
+    value === undefined ||
+    value === 'checkout-service' ||
+    value === 'idempotency-race'
+  ) {
+    return value ?? 'checkout-service';
   }
   throw new Error('Unknown benchmark scenario.');
 }
