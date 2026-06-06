@@ -154,6 +154,30 @@ entries are concise, user-facing summaries of the plan and evidence-backed
 decisions. Runs execute only approved benchmark scenarios in disposable
 workspaces; the server is not a general remote shell.
 
+### Trace-Dependent Race Benchmark
+
+The `Duplicate settlement race` scenario is intentionally less obvious than the
+checkout fixture. Its public test reports only `settlement invariant violated`.
+A separate execution probe records the causal interleaving: two concurrent
+requests observe an idempotency miss for the same key before either request
+commits, allowing two settlements.
+
+Run the controlled benchmark directly:
+
+```bash
+npm run demo:idempotency-race:controlled
+```
+
+Success requires the initial invariant failure, a `non_atomic_check_then_commit`
+trace diagnosis, exactly one changed source file, a passing retry, a repaired
+trace with one settlement, and 20 consecutive passing stress runs. The report
+sets `competitorClaimsMeasured: false`.
+
+Comparisons with other coding agents must use the same repository state, prompt,
+time and token budgets, tool access, attempt count, and evaluator. Report
+trace-assisted and no-trace ablations separately. Do not claim superiority over
+a named model from the controlled substitute run.
+
 ## Phoenix Proof
 
 Run both smoke checks when Phoenix credentials are available:

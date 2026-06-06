@@ -40,12 +40,15 @@
       <main class="workspace">
         <section class="workspace-header">
           <div>
-            <p class="eyebrow">Checkout webhook repair</p>
+            <p id="scenario-label" class="eyebrow">Checkout webhook repair</p>
             <h1 id="run-title">New repair</h1>
           </div>
           <div class="workspace-controls">
             <select id="scenario-select" aria-label="Benchmark scenario">
               <option value="checkout-service">Checkout service</option>
+              <option value="idempotency-race">
+                Duplicate settlement race
+              </option>
             </select>
             <div class="segmented-control" aria-label="Agent mode">
               <button class="mode-button active" data-mode="controlled">
@@ -136,6 +139,7 @@
           <div id="gate-list" class="gate-list">
             <div class="gate-row"><span>Safety</span><b>Waiting</b></div>
             <div class="gate-row"><span>Retry</span><b>Waiting</b></div>
+            <div class="gate-row"><span>Stress</span><b>Waiting</b></div>
             <div class="gate-row"><span>Evals</span><b>Waiting</b></div>
             <div class="gate-row"><span>Phoenix</span><b>Waiting</b></div>
           </div>

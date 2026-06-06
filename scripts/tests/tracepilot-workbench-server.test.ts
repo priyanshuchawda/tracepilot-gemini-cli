@@ -37,7 +37,10 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
     expect(status).toMatchObject({
       ok: true,
       liveReady: false,
-      scenarios: [{ id: 'checkout-service', difficulty: 'advanced' }],
+      scenarios: [
+        { id: 'checkout-service', difficulty: 'advanced' },
+        { id: 'idempotency-race', difficulty: 'expert' },
+      ],
     });
   });
 
@@ -147,6 +150,49 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
       ]),
     );
   }, 30000);
+
+  it('completes the trace-dependent idempotency race benchmark', async () => {
+    const baseUrl = await startServer(
+      createTracePilotWorkbenchServer({ env: {} }),
+    );
+    const created = await createRun(baseUrl, 'idempotency-race');
+    const run = await waitForTerminalRun(baseUrl, created.id);
+
+    expect(run).toMatchObject({
+      status: 'completed',
+      scenario: 'idempotency-race',
+      result: {
+        ok: true,
+        proofLevel: 'controlled_trace_assisted',
+        competitorClaimsMeasured: false,
+        traceEvidence: {
+          rootCause: 'non_atomic_check_then_commit',
+          observedSettlements: 2,
+          missesBeforeFirstCommit: 2,
+        },
+        repair: {
+          changedFiles: ['src/ledger.js'],
+          onlyExpectedFilesChanged: true,
+        },
+        stressVerification: {
+          runs: 20,
+          failures: 0,
+        },
+      },
+    });
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Race trace evidence',
+          status: 'pass',
+        }),
+        expect.objectContaining({
+          title: 'Repeated stress verification',
+          status: 'pass',
+        }),
+      ]),
+    );
+  }, 60000);
 });
 
 async function startServer(server: Server): Promise<string> {
@@ -161,7 +207,7 @@ async function startServer(server: Server): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function createRun(baseUrl: string) {
+async function createRun(baseUrl: string, scenario = 'checkout-service') {
   const response = await fetch(`${baseUrl}/api/runs`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -169,7 +215,7 @@ async function createRun(baseUrl: string) {
       prompt:
         'Repair the checkout webhook service and verify every failing behavior.',
       mode: 'controlled',
-      scenario: 'checkout-service',
+      scenario,
     }),
   });
   expect(response.status).toBe(202);

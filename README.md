@@ -104,6 +104,7 @@ npm run tracepilot:check
 npm run smoke:phoenix
 npm run smoke:phoenix:mcp
 npm run demo:broken-node-app
+npm run demo:idempotency-race:controlled
 npm run judge:tracepilot -- --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --eval-report .ai-logs/demo-broken-node-app/result.json --judge-input-output .ai-logs/judge-input.json --judge-result-output .ai-logs/judge-result.json
 npm run dashboard:tracepilot -- --report .ai-logs/demo-broken-node-app/result.json --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --judge-input .ai-logs/judge-input.json --judge-result .ai-logs/judge-result.json
 npm run workbench:tracepilot
