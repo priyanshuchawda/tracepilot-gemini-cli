@@ -82,6 +82,7 @@
     "eval:tracepilot": "tsx scripts/tracepilot-evals.ts",
     "judge:tracepilot": "tsx scripts/tracepilot-judge-evidence.ts",
     "dashboard:tracepilot": "tsx scripts/tracepilot-dashboard.ts",
+    "workbench:tracepilot": "tsx scripts/tracepilot-workbench-server.ts",
     "demo:broken-node-app": "tsx scripts/demo-broken-node-app.ts",
     "demo:broken-node-app:offline": "tsx scripts/demo-broken-node-app.ts --allow-missing-phoenix",
     "demo:gemini-repair-agent": "tsx scripts/demo-gemini-repair-agent.ts",

@@ -135,6 +135,25 @@ changed files, patch summaries, deterministic evals, safety status, judge
 scores, and timeline evidence without needing a server. Secret-like input fails
 closed before the HTML file is written.
 
+## Interactive Workbench
+
+Start the local coding-agent workbench:
+
+```bash
+npm run workbench:tracepilot
+```
+
+Open `http://127.0.0.1:4310`, enter a repair request, and watch the run stream
+safe plan summaries, tool activity, Phoenix evidence, changed files, and
+verification gates. Controlled mode uses a deterministic repair agent and does
+not require credentials. Live mode is enabled only when Gemini and Phoenix
+environment prerequisites are present.
+
+The workbench does not expose private model chain-of-thought. Its reasoning
+entries are concise, user-facing summaries of the plan and evidence-backed
+decisions. Runs execute only approved benchmark scenarios in disposable
+workspaces; the server is not a general remote shell.
+
 ## Phoenix Proof
 
 Run both smoke checks when Phoenix credentials are available:

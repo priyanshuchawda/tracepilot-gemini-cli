@@ -77,6 +77,7 @@ interface Options {
   workdir: string;
   output: string;
   allowMissingPhoenix: boolean;
+  task?: string;
   agentScript?: string;
   envFile: string;
   cliPath: string;
@@ -558,6 +559,8 @@ function parseArgs(argv: string[]): Options {
       options.output = argv[++index] ?? options.output;
     } else if (arg === '--allow-missing-phoenix') {
       options.allowMissingPhoenix = true;
+    } else if (arg === '--task') {
+      options.task = argv[++index];
     } else if (arg === '--agent-script') {
       options.agentScript = argv[++index];
     } else if (arg === '--env-file') {
@@ -626,6 +629,7 @@ async function runGeminiAgent(
   model: string,
 ): Promise<CommandResult> {
   const prompt = [
+    options.task ? `User repair request: ${options.task}` : undefined,
     'Repair this broken checkout webhook service.',
     'Run npm test first to observe the failure evidence.',
     'Inspect test/checkout.test.js and address all failing assertions across config, signature, and redaction behavior.',
@@ -633,7 +637,9 @@ async function runGeminiAgent(
     'When the failed tool result includes TracePilot Phoenix evidence, use it in your diagnosis.',
     'Apply the smallest safe changes under src only, then rerun npm test until it passes.',
     'Do the edits and verification; do not only explain the fix.',
-  ].join(' ');
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(' ');
   const isolatedGeminiHome = path.join(
     tmpdir(),
     'tracepilot-gemini-home',
