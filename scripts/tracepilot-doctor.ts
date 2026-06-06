@@ -27,6 +27,7 @@ const REQUIRED_TRACEPILOT_SCRIPTS = [
   'eval:tracepilot',
   'judge:tracepilot',
   'dashboard:tracepilot',
+  'workbench:tracepilot',
   'demo:broken-node-app',
   'demo:gemini-repair-agent',
 ] as const;
@@ -161,6 +162,7 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
           'npm run tracepilot:check',
           'npm run smoke:phoenix:mcp',
           'npm run demo:gemini-repair-agent',
+          'npm run workbench:tracepilot',
           'npm run judge:tracepilot -- --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --eval-report .ai-logs/demo-gemini-repair-agent/result.json --judge-input-output .ai-logs/tracepilot-judge/judge-input.json --judge-result-output .ai-logs/tracepilot-judge/judge-result.json',
           'npm run dashboard:tracepilot -- --report .ai-logs/demo-gemini-repair-agent/result.json --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --judge-input .ai-logs/tracepilot-judge/judge-input.json --judge-result .ai-logs/tracepilot-judge/judge-result.json --output .ai-logs/tracepilot-dashboard/index.html',
         ]
@@ -169,6 +171,7 @@ function buildDoctorReport(env: NodeJS.ProcessEnv): DoctorReport {
           'npm run tracepilot:check',
           'npm run demo:broken-node-app:offline',
           'npm run demo:gemini-repair-agent:offline',
+          'npm run workbench:tracepilot',
           'npm run dashboard:tracepilot -- --report .ai-logs/demo-broken-node-app/result.json --output .ai-logs/tracepilot-dashboard/index.html',
         ],
     checks,

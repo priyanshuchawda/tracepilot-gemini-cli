@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TracePilot Workbench</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <strong>TracePilot</strong>
+          <span class="product-label">Workbench</span>
+        </div>
+        <div class="topbar-actions">
+          <span id="connection-status" class="connection-status">
+            <span class="connection-dot"></span>
+            Local
+          </span>
+          <button id="refresh-button" class="icon-button" title="Refresh runs">
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <aside class="runs-panel">
+        <div class="panel-header">
+          <h2>Runs</h2>
+          <button id="new-run-button" class="icon-button" title="New run">
+            +
+          </button>
+        </div>
+        <div id="runs-list" class="runs-list"></div>
+      </aside>
+
+      <main class="workspace">
+        <section class="workspace-header">
+          <div>
+            <p class="eyebrow">Checkout webhook repair</p>
+            <h1 id="run-title">New repair</h1>
+          </div>
+          <div class="workspace-controls">
+            <select id="scenario-select" aria-label="Benchmark scenario">
+              <option value="checkout-service">Checkout service</option>
+            </select>
+            <div class="segmented-control" aria-label="Agent mode">
+              <button class="mode-button active" data-mode="controlled">
+                Controlled
+              </button>
+              <button class="mode-button" data-mode="live">Live</button>
+            </div>
+            <button
+              id="cancel-button"
+              class="icon-button hidden"
+              title="Stop run"
+            >
+              ■
+            </button>
+          </div>
+        </section>
+
+        <section id="activity-stream" class="activity-stream">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-mark" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <h2>Ready for a repair task</h2>
+            <p>
+              Trace-backed workspace · source-only patches · verified retries
+            </p>
+          </div>
+        </section>
+
+        <form id="task-form" class="composer">
+          <textarea
+            id="task-input"
+            rows="3"
+            maxlength="1200"
+            placeholder="Describe the bug or repair outcome..."
+            required
+          ></textarea>
+          <div class="composer-footer">
+            <div class="composer-meta">
+              <span id="mode-indicator">Controlled proof</span>
+              <span>Disposable workspace</span>
+            </div>
+            <button id="run-button" type="submit" class="run-button">
+              <span>Run repair</span>
+              <span aria-hidden="true">↑</span>
+            </button>
+          </div>
+        </form>
+      </main>
+
+      <aside class="evidence-panel">
+        <div class="panel-header">
+          <h2>Evidence</h2>
+          <span id="proof-badge" class="proof-badge neutral">Waiting</span>
+        </div>
+        <section class="evidence-section">
+          <h3>Run</h3>
+          <dl class="fact-list">
+            <div>
+              <dt>Status</dt>
+              <dd id="fact-status">Idle</dd>
+            </div>
+            <div>
+              <dt>Mode</dt>
+              <dd id="fact-mode">Controlled</dd>
+            </div>
+            <div>
+              <dt>Session</dt>
+              <dd id="fact-session">—</dd>
+            </div>
+            <div>
+              <dt>Proof</dt>
+              <dd id="fact-proof">—</dd>
+            </div>
+          </dl>
+        </section>
+        <section class="evidence-section">
+          <div class="section-row">
+            <h3>Changed files</h3>
+            <span id="file-count">0</span>
+          </div>
+          <div id="changed-files" class="file-list">
+            <p class="muted">No patch yet.</p>
+          </div>
+        </section>
+        <section class="evidence-section">
+          <h3>Gates</h3>
+          <div id="gate-list" class="gate-list">
+            <div class="gate-row"><span>Safety</span><b>Waiting</b></div>
+            <div class="gate-row"><span>Retry</span><b>Waiting</b></div>
+            <div class="gate-row"><span>Evals</span><b>Waiting</b></div>
+            <div class="gate-row"><span>Phoenix</span><b>Waiting</b></div>
+          </div>
+        </section>
+      </aside>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

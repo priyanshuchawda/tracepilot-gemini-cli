@@ -106,6 +106,7 @@ npm run smoke:phoenix:mcp
 npm run demo:broken-node-app
 npm run judge:tracepilot -- --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --eval-report .ai-logs/demo-broken-node-app/result.json --judge-input-output .ai-logs/judge-input.json --judge-result-output .ai-logs/judge-result.json
 npm run dashboard:tracepilot -- --report .ai-logs/demo-broken-node-app/result.json --repair-artifact .ai-logs/tracepilot-check/repair-artifact.json --judge-input .ai-logs/judge-input.json --judge-result .ai-logs/judge-result.json
+npm run workbench:tracepilot
 npm run smoke:cloud-run:local
 ```
 
@@ -122,7 +123,9 @@ report into `judge-input.json` and `judge-result.json`; supplied scored judge
 results may also be bundled by demo commands with `--judge-result-input`. Judge
 artifacts are repair-quality evidence, not a replacement for strict Phoenix
 proof. `dashboard:tracepilot` renders a self-contained sanitized HTML proof
-viewer for demos and judging.
+viewer for demos and judging. `workbench:tracepilot` starts the interactive
+repair workbench at `http://127.0.0.1:4310`; controlled mode works without live
+credentials.
 
 ## Environment
 
