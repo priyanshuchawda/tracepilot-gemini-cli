@@ -12,14 +12,20 @@ const workspace = process.argv[2];
 if (!workspace) {
   throw new Error('Expected a benchmark workspace.');
 }
+const delayMs = Number.parseInt(
+  process.env['TRACEPILOT_FAKE_AGENT_DELAY_MS'] ?? '0',
+  10,
+);
 
 try {
   await access(path.join(workspace, '.tracepilot', 'production-trace.json'));
 } catch {
+  await delay(delayMs);
   console.log(JSON.stringify({ status: 'no_change', evidence: false }));
   process.exit(0);
 }
 
+await delay(delayMs);
 await writeFile(
   path.join(workspace, 'src', 'worker.js'),
   `/**
@@ -53,3 +59,9 @@ export class SettlementWorker {
   'utf8',
 );
 console.log(JSON.stringify({ status: 'repaired', evidence: true }));
+
+function delay(milliseconds) {
+  return new Promise((resolve) =>
+    setTimeout(resolve, Math.max(0, milliseconds)),
+  );
+}
