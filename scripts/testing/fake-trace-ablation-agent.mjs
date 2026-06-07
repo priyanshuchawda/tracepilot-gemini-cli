@@ -21,19 +21,29 @@ try {
   await access(path.join(workspace, '.tracepilot', 'production-trace.json'));
 } catch {
   await progress(delayMs, [
-    'scan repository tests',
-    'inspect idempotency worker state',
-    'attempt code-only repair hypothesis',
+    'open the cloned test1 folder and scan public tests',
+    'public tests pass, so infer the bug is hidden in production invariants',
+    'inspect src/billing.js local idempotency map',
+    'trace through retry path without production spans',
+    'try a code-only hypothesis around duplicate webhook delivery',
+    'run evaluator-facing public checks again',
+    'no reliable signal identifies the cross-region shared boundary',
   ]);
   console.log(JSON.stringify({ status: 'no_change', evidence: false }));
   process.exit(0);
 }
 
 await progress(delayMs, [
-  'load Arize production trace',
-  'match session memory to incident',
-  'locate cross-worker reservation boundary',
-  'patch worker to delegate idempotency atomically',
+  'open the cloned test2 folder with .tracepilot evidence attached',
+  'load Arize production trace and session memory',
+  'read span sequence: regional idempotency miss in us-east',
+  'read span sequence: regional idempotency miss in eu-west',
+  'compare provider attempts and confirm double charge',
+  'map root cause to shared ledger reservation boundary',
+  'patch billing.js to reserve idempotency atomically',
+  'scope risk cache by full payload fingerprint',
+  'replace raw idempotency telemetry with hash-only emission',
+  'rerun public tests before hidden evaluation',
 ]);
 try {
   await access(path.join(workspace, 'src', 'billing.js'));
