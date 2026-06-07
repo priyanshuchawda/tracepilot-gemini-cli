@@ -51,6 +51,12 @@ const elements = {
   fairnessPrompt: document.querySelector('#fairness-prompt'),
   fairnessWorkspace: document.querySelector('#fairness-workspace'),
   fairnessBudget: document.querySelector('#fairness-budget'),
+  proofSource: document.querySelector('#proof-source'),
+  proofFolders: document.querySelector('#proof-folders'),
+  proofBefore: document.querySelector('#proof-before'),
+  proofBeforeDetail: document.querySelector('#proof-before-detail'),
+  proofPatch: document.querySelector('#proof-patch'),
+  proofPatchDetail: document.querySelector('#proof-patch-detail'),
   comparisonVerdict: document.querySelector('#comparison-verdict'),
   comparisonSummaryVerdict: document.querySelector(
     '#comparison-summary-verdict',
@@ -298,6 +304,7 @@ function renderComparison() {
   updateArmStatus('blind', blindEvents);
   updateArmStatus('tracepilot', traceEvents);
   updateComparisonResult(state.activeRun?.result);
+  updateComparisonProof(state.activeRun?.result);
 }
 
 function renderEvent(event) {
@@ -527,6 +534,7 @@ function updateComparisonResult(result) {
   elements.fairnessPrompt.textContent = `Prompt · ${shortHash(result.promptSha256)}`;
   elements.fairnessWorkspace.textContent = `Source · ${shortHash(result.fixtureSha256)}`;
   elements.fairnessBudget.textContent = `${Math.round((result.budgetMs ?? 0) / 1000)}s shared deadline`;
+  updateComparisonProof(result);
   const winner = result.winner ?? inferWinner(blind, tracepilot);
   const verdict =
     winner === 'tracepilot'
@@ -539,6 +547,59 @@ function updateComparisonResult(result) {
   renderRubric(result.rubric, blind?.hiddenAfter?.total);
   renderBugMatrix(blind, tracepilot);
   renderArizeEvidence(result.traceEvidence ?? findTraceEvidenceFromEvents());
+}
+
+function updateComparisonProof(result) {
+  const fairness = [...state.events]
+    .reverse()
+    .find((event) => event.title === 'Fairness contract');
+  const baseline = [...state.events]
+    .reverse()
+    .find((event) => event.title === 'Baseline evaluation');
+  const tracepilot = Array.isArray(result?.arms)
+    ? result.arms.find(
+        (arm) => arm.arm === 'tracepilot' || arm.arm === 'trace_assisted',
+      )
+    : undefined;
+  const blind = Array.isArray(result?.arms)
+    ? result.arms.find((arm) => arm.arm === 'blind')
+    : undefined;
+
+  elements.proofSource.textContent =
+    result?.fixtureName ??
+    fairness?.data?.fixtureName ??
+    'Enterprise billing incident';
+  elements.proofFolders.textContent =
+    result?.workspaces?.test1 && result?.workspaces?.test2
+      ? `Created ${basename(result.workspaces.test1)} and ${basename(result.workspaces.test2)} from one source hash.`
+      : 'Creating matched test1 and test2 folders from the same broken repo.';
+
+  const beforeHidden =
+    blind?.hiddenBefore ?? tracepilot?.hiddenBefore ?? baseline?.data?.hidden;
+  if (beforeHidden) {
+    elements.proofBefore.textContent = `Public pass, hidden ${beforeHidden.passed}/${beforeHidden.total}`;
+    elements.proofBeforeDetail.textContent =
+      'The repo looks healthy to public tests, but hidden production checks expose the incident.';
+  } else {
+    elements.proofBefore.textContent = 'Awaiting baseline';
+    elements.proofBeforeDetail.textContent =
+      'Public tests and hidden production bugs run before both agents.';
+  }
+
+  const changed = tracepilot?.productionChangedFiles ?? [];
+  if (changed.length > 0) {
+    elements.proofPatch.textContent = changed.join(', ');
+    elements.proofPatchDetail.textContent =
+      tracepilot?.patchProof?.summary ??
+      'TracePilot produced a source patch, then the hidden evaluator reran.';
+  } else {
+    elements.proofPatch.textContent =
+      blind?.productionChangedFiles?.length > 0
+        ? blind.productionChangedFiles.join(', ')
+        : 'Awaiting patch';
+    elements.proofPatchDetail.textContent =
+      'Changed source files appear only after the agent acts.';
+  }
 }
 
 function updateArmMetrics(name, arm) {
@@ -678,6 +739,7 @@ function resetComparison() {
   renderRubric();
   renderBugMatrix();
   renderArizeEvidence();
+  updateComparisonProof();
   elements.blindStatus.className = 'activity-status';
   elements.traceStatus.className = 'activity-status';
   elements.blindStatus.textContent = 'Waiting';
@@ -687,6 +749,10 @@ function resetComparison() {
   }
   elements.blindTimer.textContent = '00:00';
   elements.traceTimer.textContent = '00:00';
+}
+
+function basename(value) {
+  return String(value).split(/[\\/]/).filter(Boolean).pop() ?? String(value);
 }
 
 function startTimer(createdAt) {

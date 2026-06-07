@@ -21,9 +21,11 @@ const prompt =
   process.argv[3] ??
   'A global billing platform double-charged an enterprise invoice after a cross-region webhook replay. Repair concurrency, retry, payload-conflict, risk-cache, and PII telemetry failures.';
 const finalHoldMs = Number.parseInt(
-  process.env['TRACEPILOT_RECORD_FINAL_HOLD_MS'] ?? '60000',
+  process.env['TRACEPILOT_RECORD_FINAL_HOLD_MS'] ?? '25000',
   10,
 );
+const fakeAgentDelayMs =
+  process.env['TRACEPILOT_FAKE_AGENT_DELAY_MS'] ?? '45000';
 
 const edgePath =
   process.env.EDGE_PATH ??
@@ -113,8 +115,18 @@ try {
   await typeText(client, prompt, 18);
   await wait(2500);
   await evaluate(client, `document.querySelector('#run-button').click();`);
+  await wait(18000);
+  await evaluate(
+    client,
+    `document.querySelector('#comparison-view')?.scrollTo({ top: 520, behavior: 'smooth' });`,
+  );
 
   await waitForResult(client);
+  await evaluate(
+    client,
+    `document.querySelector('#comparison-view')?.scrollTo({ top: 0, behavior: 'smooth' });`,
+  );
+  await wait(1500);
   console.log('comparison completed, holding final frame');
   await wait(finalHoldMs);
 
@@ -195,7 +207,7 @@ async function ensureWorkbench() {
     ['--import', 'tsx', 'scripts/tracepilot-workbench-server.ts'],
     {
       cwd: workspace,
-      env: { ...process.env, TRACEPILOT_FAKE_AGENT_DELAY_MS: '8000' },
+      env: { ...process.env, TRACEPILOT_FAKE_AGENT_DELAY_MS: fakeAgentDelayMs },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     },

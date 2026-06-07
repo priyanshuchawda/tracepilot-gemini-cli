@@ -86,6 +86,10 @@ interface ArmResult {
   hiddenAfter: Evaluation;
   changedFiles: string[];
   productionChangedFiles: string[];
+  patchProof: {
+    summary: string;
+    changedFiles: string[];
+  };
   changesWithinAllowedScope: boolean;
   metrics: ReturnType<typeof scoreArm>;
   solved: boolean;
@@ -127,6 +131,7 @@ async function main(argv: string[]): Promise<number> {
     detail: `Same model, prompt, permissions, evaluator, and ${options.budgetMs}ms deadline.`,
     status: 'pass',
     data: {
+      fixtureName: path.basename(fixture),
       fixtureSha256: fixtureDigest,
       test1Sha256: startingDigests[0],
       test2Sha256: startingDigests[1],
@@ -181,6 +186,10 @@ async function main(argv: string[]): Promise<number> {
     title: 'Baseline evaluation',
     detail: `Both public suites pass; both hidden evaluators begin at ${before[0].hidden.score * 100}%.`,
     status: 'pass',
+    data: {
+      publicTestsPassed: before[0].publicTests.exitCode === 0,
+      hidden: before[0].hidden,
+    },
   });
 
   const startedAt = Date.now();
@@ -241,6 +250,7 @@ async function main(argv: string[]): Promise<number> {
       startingDigests.every((digest) => digest === fixtureDigest) &&
       arms.every((arm) => arm.workspaceDigestBefore === fixtureDigest),
     benchmark: 'distributed-settlement-comparison',
+    fixtureName: path.basename(fixture),
     generatedAt: new Date().toISOString(),
     model: options.agentScript ? 'controlled-substitute' : options.model,
     prompt: options.prompt,
@@ -439,6 +449,7 @@ async function finalizeArm(input: {
   const productionChangedFiles = changedFiles.filter((file) =>
     file.startsWith('src/'),
   );
+  const patchProof = buildPatchProof(productionChangedFiles);
   const changesWithinAllowedScope = changedFiles.every(
     (file) => file.startsWith('src/') || file.startsWith('test/'),
   );
@@ -476,9 +487,26 @@ async function finalizeArm(input: {
     hiddenAfter,
     changedFiles,
     productionChangedFiles,
+    patchProof,
     changesWithinAllowedScope,
     metrics,
     solved,
+  };
+}
+
+function buildPatchProof(productionChangedFiles: string[]) {
+  if (productionChangedFiles.length === 0) {
+    return {
+      summary: 'No production source patch was produced.',
+      changedFiles: [],
+    };
+  }
+  return {
+    summary:
+      productionChangedFiles.length === 1
+        ? `Source patch changed ${productionChangedFiles[0]} only.`
+        : `Source patch changed ${productionChangedFiles.length} production files.`,
+    changedFiles: productionChangedFiles,
   };
 }
 
@@ -668,7 +696,7 @@ function emitAgentActivity(
   line: string,
   activityCount: number,
 ): number {
-  if (activityCount >= 8) {
+  if (activityCount >= 12) {
     return activityCount;
   }
   const trimmed = line.trim();
