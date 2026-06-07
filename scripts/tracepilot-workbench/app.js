@@ -258,11 +258,24 @@ function updateEvidence(run = state.activeRun) {
   elements.factMode.textContent = titleCase(run.mode);
   const result = run.result ?? {};
   const repair = result.repair ?? {};
+  const assistedArm = Array.isArray(result.arms)
+    ? result.arms.find((arm) => arm.arm === 'trace_assisted')
+    : undefined;
   const changedFiles = Array.isArray(repair.changedFiles)
     ? repair.changedFiles
-    : [];
-  const proofLevel = result.proofLevel ?? findEventDetail('Proof level') ?? '—';
-  const session = result.sessionId ?? findEventDetail('Trace session') ?? '—';
+    : Array.isArray(assistedArm?.changedFiles)
+      ? assistedArm.changedFiles
+      : [];
+  const proofLevel =
+    result.proofLevel ??
+    result.outcome ??
+    findEventDetail('Proof level') ??
+    '—';
+  const session =
+    result.sessionId ??
+    result.promptSha256 ??
+    findEventDetail('Trace session') ??
+    '—';
   elements.factProof.textContent = proofLevel;
   elements.factSession.textContent = session;
   elements.fileCount.textContent = String(changedFiles.length);
@@ -290,6 +303,8 @@ function updateEvidenceFromEvents() {
     ['Safety', 'Safety gate'],
     ['Retry', 'Verification retry'],
     ['Stress', 'Repeated stress verification'],
+    ['Blind', 'Blind arm'],
+    ['Trace', 'Trace-assisted arm'],
     ['Evals', 'Deterministic evals'],
     ['Phoenix', 'Phoenix MCP introspection'],
   ];
@@ -364,10 +379,13 @@ function titleCase(value) {
 }
 
 function updateScenarioLabel() {
+  const labels = {
+    'checkout-service': 'Checkout webhook repair',
+    'idempotency-race': 'Duplicate settlement race',
+    'trace-ablation': 'Measured blind vs trace comparison',
+  };
   elements.scenarioLabel.textContent =
-    elements.scenario.value === 'idempotency-race'
-      ? 'Duplicate settlement race'
-      : 'Checkout webhook repair';
+    labels[elements.scenario.value] ?? 'TracePilot repair';
 }
 
 function formatTime(value) {

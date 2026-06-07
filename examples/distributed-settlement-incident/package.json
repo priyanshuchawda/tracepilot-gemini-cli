@@ -1,0 +1,8 @@
+{
+  "name": "distributed-settlement-incident",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -40,6 +40,7 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
       scenarios: [
         { id: 'checkout-service', difficulty: 'advanced' },
         { id: 'idempotency-race', difficulty: 'expert' },
+        { id: 'trace-ablation', difficulty: 'measured' },
       ],
     });
   });
@@ -193,6 +194,52 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
       ]),
     );
   }, 60000);
+
+  it('streams a controlled blind-versus-trace comparison', async () => {
+    const baseUrl = await startServer(
+      createTracePilotWorkbenchServer({ env: {} }),
+    );
+    const created = await createRun(baseUrl, 'trace-ablation');
+    const run = await waitForTerminalRun(baseUrl, created.id);
+
+    expect(run).toMatchObject({
+      status: 'completed',
+      scenario: 'trace-ablation',
+      result: {
+        ok: true,
+        samePrompt: true,
+        sameStartingWorkspace: true,
+        outcome: 'trace_assistance_advantage',
+        arms: [
+          {
+            arm: 'blind',
+            evidenceAccess: false,
+            hiddenAfter: { score: 1 / 3 },
+            solved: false,
+          },
+          {
+            arm: 'trace_assisted',
+            evidenceAccess: true,
+            hiddenAfter: { score: 1 },
+            solved: true,
+          },
+        ],
+      },
+    });
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ title: 'Blind arm', status: 'fail' }),
+        expect.objectContaining({
+          title: 'Trace-assisted arm',
+          status: 'pass',
+        }),
+        expect.objectContaining({
+          title: 'Measured A/B outcome',
+          status: 'pass',
+        }),
+      ]),
+    );
+  }, 30000);
 });
 
 async function startServer(server: Server): Promise<string> {
