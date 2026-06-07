@@ -99,7 +99,8 @@
                 <b id="summary-blind-score">—</b>
                 <small>
                   <span id="summary-blind-accuracy">—</span> accuracy ·
-                  <span id="summary-blind-hits">—</span> hits/misses
+                  <span id="summary-blind-hits">—</span> hits/misses ·
+                  <span id="summary-blind-time">—</span>
                 </small>
               </div>
               <div>
@@ -107,10 +108,35 @@
                 <b id="summary-trace-score">—</b>
                 <small>
                   <span id="summary-trace-accuracy">—</span> accuracy ·
-                  <span id="summary-trace-hits">—</span> hits/misses
+                  <span id="summary-trace-hits">—</span> hits/misses ·
+                  <span id="summary-trace-time">—</span>
                 </small>
               </div>
             </div>
+          </section>
+
+          <section class="comparison-audit">
+            <article>
+              <div class="audit-header">
+                <p class="eyebrow">Rubric</p>
+                <span>Hidden checks are run after both agents finish</span>
+              </div>
+              <div id="rubric-grid" class="rubric-grid">
+                <div><b>60</b><span>Correctness</span></div>
+                <div><b>15</b><span>Regression</span></div>
+                <div><b>10</b><span>Patch scope</span></div>
+                <div><b>15</b><span>Speed</span></div>
+              </div>
+            </article>
+            <article>
+              <div class="audit-header">
+                <p class="eyebrow">Hidden bug checks</p>
+                <span id="bug-check-count">Awaiting evaluator</span>
+              </div>
+              <div id="bug-matrix" class="bug-matrix">
+                <p class="muted">No hidden results yet.</p>
+              </div>
+            </article>
           </section>
 
           <div class="comparison-grid">

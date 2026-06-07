@@ -55,6 +55,9 @@ const elements = {
   comparisonSummaryVerdict: document.querySelector(
     '#comparison-summary-verdict',
   ),
+  rubricGrid: document.querySelector('#rubric-grid'),
+  bugMatrix: document.querySelector('#bug-matrix'),
+  bugCheckCount: document.querySelector('#bug-check-count'),
   runButtonLabel: document.querySelector('#run-button-label'),
   metrics: {
     blind: {
@@ -66,6 +69,7 @@ const elements = {
       summaryScore: document.querySelector('#summary-blind-score'),
       summaryAccuracy: document.querySelector('#summary-blind-accuracy'),
       summaryHits: document.querySelector('#summary-blind-hits'),
+      summaryTime: document.querySelector('#summary-blind-time'),
     },
     tracepilot: {
       accuracy: document.querySelector('#trace-accuracy'),
@@ -76,6 +80,7 @@ const elements = {
       summaryScore: document.querySelector('#summary-trace-score'),
       summaryAccuracy: document.querySelector('#summary-trace-accuracy'),
       summaryHits: document.querySelector('#summary-trace-hits'),
+      summaryTime: document.querySelector('#summary-trace-time'),
     },
   },
 };
@@ -507,6 +512,8 @@ function updateComparisonResult(result) {
   updateArmMetrics('blind', blind);
   updateArmMetrics('tracepilot', tracepilot);
   if (!result) {
+    renderRubric();
+    renderBugMatrix();
     return;
   }
   elements.fairnessModel.textContent = `Model · ${result.model ?? 'same'}`;
@@ -522,6 +529,8 @@ function updateComparisonResult(result) {
         : 'Measured run ends in a tie';
   elements.comparisonVerdict.textContent = verdict;
   elements.comparisonSummaryVerdict.textContent = verdict;
+  renderRubric(result.rubric, blind?.hiddenAfter?.total);
+  renderBugMatrix(blind, tracepilot);
 }
 
 function updateArmMetrics(name, arm) {
@@ -547,8 +556,71 @@ function updateArmMetrics(name, arm) {
     : '—';
   if (arm?.agent?.durationMs !== undefined) {
     const timer = name === 'blind' ? elements.blindTimer : elements.traceTimer;
-    timer.textContent = formatDuration(arm.agent.durationMs);
+    const duration = formatDuration(arm.agent.durationMs);
+    timer.textContent = duration;
+    metricElements.summaryTime.textContent = duration;
+  } else {
+    metricElements.summaryTime.textContent = '—';
   }
+}
+
+function renderRubric(rubric, hiddenTotal = 3) {
+  const correctness = Number(rubric?.correctness ?? 60);
+  const regressionSafety = Number(rubric?.regressionSafety ?? 15);
+  const patchDiscipline = Number(rubric?.patchDiscipline ?? 10);
+  const speed = Number(rubric?.speed ?? 15);
+  const perCheck = Math.round(correctness / Math.max(1, hiddenTotal));
+  const rows = [
+    [`${correctness}`, `${hiddenTotal} hidden invariants, ${perCheck} each`],
+    [`${regressionSafety}`, 'Public tests must keep passing'],
+    [`${patchDiscipline}`, 'Source/test changes only, focused patch'],
+    [`${speed}`, 'Only awarded after full correctness'],
+  ];
+  elements.rubricGrid.innerHTML = rows
+    .map(
+      ([points, label]) =>
+        `<div><b>${escapeHtml(points)}</b><span>${escapeHtml(label)}</span></div>`,
+    )
+    .join('');
+}
+
+function renderBugMatrix(blind, tracepilot) {
+  const blindChecks = blind?.hiddenAfter?.checks ?? [];
+  const traceChecks = tracepilot?.hiddenAfter?.checks ?? [];
+  const ids = [
+    ...new Set([...blindChecks, ...traceChecks].map((check) => check.id)),
+  ];
+  elements.bugCheckCount.textContent = ids.length
+    ? `${ids.length} hidden production bugs`
+    : 'Awaiting evaluator';
+  elements.bugMatrix.innerHTML = ids.length
+    ? ids
+        .map((id) => {
+          const blindCheck = blindChecks.find((check) => check.id === id);
+          const traceCheck = traceChecks.find((check) => check.id === id);
+          return `<div class="bug-row">
+            <span>${escapeHtml(hiddenCheckLabel(id))}</span>
+            ${renderCheckBadge('Gemini', blindCheck)}
+            ${renderCheckBadge('TracePilot', traceCheck)}
+          </div>`;
+        })
+        .join('')
+    : '<p class="muted">No hidden results yet.</p>';
+}
+
+function renderCheckBadge(label, check) {
+  const status = check?.status ?? 'waiting';
+  const title = check?.reason ? ` title="${escapeHtml(check.reason)}"` : '';
+  return `<b class="${escapeHtml(status)}"${title}>${escapeHtml(label)} ${escapeHtml(titleCase(status))}</b>`;
+}
+
+function hiddenCheckLabel(id) {
+  const labels = {
+    cross_worker_atomicity: 'Cross-worker duplicate charge',
+    failed_reservation_released: 'Failed reservation retry recovery',
+    payload_conflict_rejected: 'Payload conflict rejection',
+  };
+  return labels[id] ?? titleCase(String(id).replaceAll('_', ' '));
 }
 
 function resetComparison() {
@@ -559,6 +631,8 @@ function resetComparison() {
     '<p class="muted">Waiting for comparison.</p>';
   elements.comparisonVerdict.textContent = 'Awaiting both agents';
   elements.comparisonSummaryVerdict.textContent = 'Awaiting both agents';
+  renderRubric();
+  renderBugMatrix();
   elements.blindStatus.className = 'activity-status';
   elements.traceStatus.className = 'activity-status';
   elements.blindStatus.textContent = 'Waiting';

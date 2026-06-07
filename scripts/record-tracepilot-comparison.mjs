@@ -20,6 +20,10 @@ const output =
 const prompt =
   process.argv[3] ??
   'A production settlement was charged twice after a delivery retry. Compare both agents fairly and verify all production invariants.';
+const finalHoldMs = Number.parseInt(
+  process.env['TRACEPILOT_RECORD_FINAL_HOLD_MS'] ?? '60000',
+  10,
+);
 
 const edgePath =
   process.env.EDGE_PATH ??
@@ -85,7 +89,7 @@ try {
 
   console.log('starting browser capture');
   capture = startBrowserCapture(client, frameDir);
-  await wait(1200);
+  await wait(4500);
   console.log('starting comparison run');
   await evaluate(
     client,
@@ -97,7 +101,7 @@ try {
     scenario.dispatchEvent(new Event('change', { bubbles: true }));
   `,
   );
-  await wait(900);
+  await wait(5000);
   await evaluate(
     client,
     `
@@ -106,13 +110,13 @@ try {
     input.focus();
   `,
   );
-  await client.command('Input.insertText', { text: prompt });
-  await wait(900);
+  await typeText(client, prompt, 18);
+  await wait(2500);
   await evaluate(client, `document.querySelector('#run-button').click();`);
 
   await waitForResult(client);
   console.log('comparison completed, holding final frame');
-  await wait(14_000);
+  await wait(finalHoldMs);
 
   const frameCount = await capture.stop();
   capture = undefined;
@@ -121,7 +125,7 @@ try {
   await run(ffmpegPath, [
     '-y',
     '-framerate',
-    '5',
+    '3',
     '-i',
     path.join(frameDir, 'frame-%05d.png'),
     '-r',
@@ -149,7 +153,7 @@ try {
   const media = JSON.parse(probe.stdout);
   const duration = Number(media.format?.duration ?? 0);
   const size = Number(media.format?.size ?? 0);
-  if (!Number.isFinite(duration) || duration < 10 || size < 50_000) {
+  if (!Number.isFinite(duration) || duration < 60 || size < 50_000) {
     throw new Error(`Recorded file did not verify: ${probe.stdout}`);
   }
 
@@ -172,15 +176,17 @@ try {
 }
 
 async function ensureWorkbench() {
-  try {
-    const response = await fetch('http://127.0.0.1:4310/api/status', {
-      signal: AbortSignal.timeout(1500),
-    });
-    if (response.ok) {
-      return undefined;
+  if (process.env['TRACEPILOT_RECORD_REUSE_SERVER'] === 'true') {
+    try {
+      const response = await fetch('http://127.0.0.1:4310/api/status', {
+        signal: AbortSignal.timeout(1500),
+      });
+      if (response.ok) {
+        return undefined;
+      }
+    } catch {
+      // Start a server owned by this recording process.
     }
-  } catch {
-    // Start a server owned by this recording process.
   }
 
   console.log('starting workbench server');
@@ -189,7 +195,7 @@ async function ensureWorkbench() {
     ['--import', 'tsx', 'scripts/tracepilot-workbench-server.ts'],
     {
       cwd: workspace,
-      env: process.env,
+      env: { ...process.env, TRACEPILOT_FAKE_AGENT_DELAY_MS: '8000' },
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -265,6 +271,13 @@ async function evaluate(client, expression) {
     awaitPromise: true,
     returnByValue: true,
   });
+}
+
+async function typeText(client, text, delayMs) {
+  for (const character of text) {
+    await client.command('Input.insertText', { text: character });
+    await wait(delayMs);
+  }
 }
 
 function startBrowserCapture(client, directory) {
