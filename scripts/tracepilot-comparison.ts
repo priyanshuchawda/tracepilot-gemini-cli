@@ -130,11 +130,18 @@ async function main(argv: string[]): Promise<number> {
   });
 
   const memory = await loadSessionMemory(options.memoryFile);
+  const traceEvidence = JSON.parse(
+    await readFile(
+      path.resolve('scripts/testing/distributed-settlement-trace.json'),
+      'utf8',
+    ),
+  ) as Record<string, unknown>;
   await mkdir(path.join(test2, '.tracepilot'), { recursive: true });
   await Promise.all([
-    cp(
-      path.resolve('scripts/testing/distributed-settlement-trace.json'),
+    writeFile(
       path.join(test2, '.tracepilot', 'production-trace.json'),
+      `${JSON.stringify(traceEvidence, null, 2)}\n`,
+      'utf8',
     ),
     writeFile(
       path.join(test2, '.tracepilot', 'session-memory.json'),
@@ -145,9 +152,13 @@ async function main(argv: string[]): Promise<number> {
   emit({
     arm: 'tracepilot',
     kind: 'evidence',
-    title: 'Session evidence retrieved',
-    detail: `${memory.entries?.length ?? 0} verified prior outcome(s) matched this incident.`,
+    title: 'Arize evidence retrieved',
+    detail: arizeTraceSummary(traceEvidence, memory.entries?.length ?? 0),
     status: 'pass',
+    data: {
+      traceEvidence: summarizeTraceEvidence(traceEvidence),
+      sessionMemoryEntries: memory.entries?.length ?? 0,
+    },
   });
   emit({
     arm: 'blind',
@@ -232,6 +243,7 @@ async function main(argv: string[]): Promise<number> {
     budgetMs: options.budgetMs,
     wallClockMs,
     workspaces: { test1, test2 },
+    traceEvidence: summarizeTraceEvidence(traceEvidence),
     fairness: {
       samePrompt: true,
       sameStartingWorkspace: true,
@@ -292,6 +304,43 @@ async function main(argv: string[]): Promise<number> {
   });
   console.log(`COMPARISON_REPORT: ${output}`);
   return report.ok ? 0 : 1;
+}
+
+function summarizeTraceEvidence(traceEvidence: Record<string, unknown>) {
+  const causalFinding = getRecord(traceEvidence['causalFinding']) ?? {};
+  const spans = Array.isArray(traceEvidence['spans'])
+    ? traceEvidence['spans']
+    : [];
+  return {
+    incident: String(traceEvidence['incident'] ?? 'unknown incident'),
+    invariant: String(traceEvidence['invariant'] ?? 'unknown invariant'),
+    finding: String(causalFinding['kind'] ?? 'unknown finding'),
+    detail: String(causalFinding['detail'] ?? ''),
+    requiredBoundary: String(causalFinding['requiredBoundary'] ?? ''),
+    spanCount: spans.length,
+    repeatedMisses: spans.filter(
+      (span) =>
+        getRecord(span)?.['operation'] === 'worker.idempotency_check' &&
+        getRecord(span)?.['outcome'] === 'miss',
+    ).length,
+    providerAttempts: spans.filter(
+      (span) => getRecord(span)?.['operation'] === 'provider.settlement',
+    ).length,
+  };
+}
+
+function arizeTraceSummary(
+  traceEvidence: Record<string, unknown>,
+  memoryEntries: number,
+): string {
+  const summary = summarizeTraceEvidence(traceEvidence);
+  return `${summary.providerAttempts} provider settlements after ${summary.repeatedMisses} idempotency misses; ${memoryEntries} verified prior outcome(s) matched.`;
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 async function loadSessionMemory(memoryFile: string): Promise<{
@@ -554,18 +603,18 @@ async function runCommand(
     let stdout = '';
     let stderr = '';
     let activityCount = 0;
+    let stdoutBuffer = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);
     child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-      if (arm && activityCount < 8) {
-        activityCount += 1;
-        emit({
-          arm,
-          kind: 'tool',
-          title: 'Agent activity',
-          detail: `Processing repository evidence and repair step ${activityCount}.`,
-          status: 'running',
-        });
+      const text = chunk.toString();
+      stdout += text;
+      stdoutBuffer += text;
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() ?? '';
+      if (arm) {
+        for (const line of lines) {
+          activityCount = emitAgentActivity(arm, line, activityCount);
+        }
       }
     });
     child.stderr.on('data', (chunk: Buffer) => {
@@ -603,6 +652,37 @@ async function runCommand(
       });
     });
   });
+}
+
+function emitAgentActivity(
+  arm: ArmName,
+  line: string,
+  activityCount: number,
+): number {
+  if (activityCount >= 8) {
+    return activityCount;
+  }
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return activityCount;
+  }
+  let detail = `Processing repository evidence and repair step ${activityCount + 1}.`;
+  try {
+    const parsed = JSON.parse(trimmed) as { step?: unknown; status?: unknown };
+    if (typeof parsed.step === 'string') {
+      detail = parsed.step;
+    }
+  } catch {
+    detail = trimmed.slice(0, 120);
+  }
+  emit({
+    arm,
+    kind: 'tool',
+    title: 'Agent activity',
+    detail,
+    status: 'running',
+  });
+  return activityCount + 1;
 }
 
 async function changedFilesAgainstFixture(
