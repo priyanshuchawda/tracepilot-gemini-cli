@@ -58,6 +58,12 @@ const elements = {
   rubricGrid: document.querySelector('#rubric-grid'),
   bugMatrix: document.querySelector('#bug-matrix'),
   bugCheckCount: document.querySelector('#bug-check-count'),
+  arizeSpanCount: document.querySelector('#arize-span-count'),
+  arizeFinding: document.querySelector('#arize-finding'),
+  arizeDetail: document.querySelector('#arize-detail'),
+  arizeMisses: document.querySelector('#arize-misses'),
+  arizeAttempts: document.querySelector('#arize-attempts'),
+  arizeBoundary: document.querySelector('#arize-boundary'),
   runButtonLabel: document.querySelector('#run-button-label'),
   metrics: {
     blind: {
@@ -514,6 +520,7 @@ function updateComparisonResult(result) {
   if (!result) {
     renderRubric();
     renderBugMatrix();
+    renderArizeEvidence(findTraceEvidenceFromEvents());
     return;
   }
   elements.fairnessModel.textContent = `Model · ${result.model ?? 'same'}`;
@@ -531,6 +538,7 @@ function updateComparisonResult(result) {
   elements.comparisonSummaryVerdict.textContent = verdict;
   renderRubric(result.rubric, blind?.hiddenAfter?.total);
   renderBugMatrix(blind, tracepilot);
+  renderArizeEvidence(result.traceEvidence ?? findTraceEvidenceFromEvents());
 }
 
 function updateArmMetrics(name, arm) {
@@ -608,6 +616,38 @@ function renderBugMatrix(blind, tracepilot) {
     : '<p class="muted">No hidden results yet.</p>';
 }
 
+function renderArizeEvidence(traceEvidence) {
+  if (!traceEvidence) {
+    elements.arizeSpanCount.textContent = 'Awaiting trace';
+    elements.arizeFinding.textContent = 'No trace evidence yet';
+    elements.arizeDetail.textContent =
+      'TracePilot waits for production evidence before ranking likely fixes.';
+    elements.arizeMisses.textContent = '—';
+    elements.arizeAttempts.textContent = '—';
+    elements.arizeBoundary.textContent = '—';
+    return;
+  }
+  elements.arizeSpanCount.textContent = `${traceEvidence.spanCount ?? 0} spans`;
+  elements.arizeFinding.textContent = titleCase(
+    String(traceEvidence.finding ?? 'production trace'),
+  );
+  elements.arizeDetail.textContent =
+    traceEvidence.detail ??
+    traceEvidence.invariant ??
+    'Production trace narrowed the repair boundary.';
+  elements.arizeMisses.textContent = String(traceEvidence.repeatedMisses ?? 0);
+  elements.arizeAttempts.textContent = String(
+    traceEvidence.providerAttempts ?? 0,
+  );
+  elements.arizeBoundary.textContent =
+    traceEvidence.requiredBoundary ?? 'Shared repair boundary';
+}
+
+function findTraceEvidenceFromEvents() {
+  return [...state.events].reverse().find((event) => event.data?.traceEvidence)
+    ?.data.traceEvidence;
+}
+
 function renderCheckBadge(label, check) {
   const status = check?.status ?? 'waiting';
   const title = check?.reason ? ` title="${escapeHtml(check.reason)}"` : '';
@@ -633,6 +673,7 @@ function resetComparison() {
   elements.comparisonSummaryVerdict.textContent = 'Awaiting both agents';
   renderRubric();
   renderBugMatrix();
+  renderArizeEvidence();
   elements.blindStatus.className = 'activity-status';
   elements.traceStatus.className = 'activity-status';
   elements.blindStatus.textContent = 'Waiting';
