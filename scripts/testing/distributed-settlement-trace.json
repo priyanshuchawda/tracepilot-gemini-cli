@@ -1,0 +1,40 @@
+{
+  "incident": "duplicate settlement after delivery retry",
+  "correlationId": "incident-7f3a",
+  "invariant": "one settlement per idempotency key across all workers",
+  "spans": [
+    {
+      "worker": "worker-a",
+      "operation": "worker.idempotency_check",
+      "keyHash": "sha256:44c7",
+      "outcome": "miss",
+      "coordinatorInstance": "coordinator-primary"
+    },
+    {
+      "worker": "worker-b",
+      "operation": "worker.idempotency_check",
+      "keyHash": "sha256:44c7",
+      "outcome": "miss",
+      "coordinatorInstance": "coordinator-primary"
+    },
+    {
+      "worker": "worker-a",
+      "operation": "provider.settlement",
+      "attempt": 1
+    },
+    {
+      "worker": "worker-b",
+      "operation": "provider.settlement",
+      "attempt": 2
+    }
+  ],
+  "causalFinding": {
+    "kind": "reservation_scope_mismatch",
+    "detail": "Both workers made an independent local acceptance decision even though they shared coordinator-primary.",
+    "requiredBoundary": "atomic reservation must be shared across workers",
+    "mustPreserve": [
+      "failed reservations remain retryable",
+      "same key with different payload is rejected"
+    ]
+  }
+}

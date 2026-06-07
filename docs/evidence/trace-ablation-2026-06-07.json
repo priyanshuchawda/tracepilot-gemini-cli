@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-06-07",
+  "benchmark": "distributed-settlement-trace-ablation",
+  "model": "gemini-3.1-flash-lite-preview",
+  "budgetMsPerArm": 120000,
+  "promptSha256": "039534fe8d665bbcfcd57d505b80e0893d38d7b958220a30023b87f48c4a3672",
+  "fixtureSha256": "d9f8635af923ecbab6beab265b64d87b8bf6b95cb3642bd2d994156cf8916525",
+  "samePrompt": true,
+  "sameStartingWorkspace": true,
+  "hiddenEvaluatorVisibleToAgent": false,
+  "outcome": "trace_assistance_advantage",
+  "arms": [
+    {
+      "arm": "blind",
+      "evidenceAccess": false,
+      "durationMs": 98090,
+      "publicTestsPassed": true,
+      "hiddenScore": 0.3333333333333333,
+      "hiddenChecksPassed": 1,
+      "hiddenChecksTotal": 3,
+      "productionChangedFiles": ["src/worker.js"],
+      "solved": false
+    },
+    {
+      "arm": "trace_assisted",
+      "evidenceAccess": true,
+      "durationMs": 79800,
+      "publicTestsPassed": true,
+      "hiddenScore": 1,
+      "hiddenChecksPassed": 3,
+      "hiddenChecksTotal": 3,
+      "productionChangedFiles": ["src/worker.js"],
+      "diagnosticFilesAdded": ["test/repro.test.js"],
+      "solved": true
+    }
+  ],
+  "claimBoundary": "This measures one Gemini model on one fixed benchmark. It does not establish results for unmeasured models."
+}

@@ -178,6 +178,35 @@ time and token budgets, tool access, attempt count, and evaluator. Report
 trace-assisted and no-trace ablations separately. Do not claim superiority over
 a named model from the controlled substitute run.
 
+### Blind Versus Trace A/B
+
+The judge-ready comparison uses a production-only distributed settlement
+incident. Public tests pass before repair and after both agent attempts. The
+hidden evaluator checks cross-worker atomicity, retry after provider failure,
+and idempotency-key payload conflicts.
+
+```bash
+npm run demo:trace-ablation:controlled
+npm run demo:trace-ablation
+```
+
+Both arms receive the same prompt, model, 120-second budget, and byte-identical
+starting workspace. Only the trace-assisted arm receives
+`.tracepilot/production-trace.json`; the hidden evaluator is outside both
+workspaces.
+
+The measured June 7, 2026 run with `gemini-3.1-flash-lite-preview` produced:
+
+| Arm            | Public tests | Hidden checks | Time    | Result                          |
+| -------------- | ------------ | ------------- | ------- | ------------------------------- |
+| Blind          | Pass         | 1/3           | 98.09 s | Plausible but incomplete repair |
+| Trace-assisted | Pass         | 3/3           | 79.80 s | Solved                          |
+
+The prompt and fixture hashes plus the sanitized result are committed at
+[`docs/evidence/trace-ablation-2026-06-07.json`](evidence/trace-ablation-2026-06-07.json).
+This result measures that model and benchmark only; other models remain
+unmeasured.
+
 ## Phoenix Proof
 
 Run both smoke checks when Phoenix credentials are available:

@@ -22,7 +22,10 @@ dotenv.config({ quiet: true });
 
 type RunMode = 'controlled' | 'live';
 type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
-type BenchmarkScenario = 'checkout-service' | 'idempotency-race';
+type BenchmarkScenario =
+  | 'checkout-service'
+  | 'idempotency-race'
+  | 'trace-ablation';
 
 interface WorkbenchEvent {
   seq: number;
@@ -98,6 +101,13 @@ export function createTracePilotWorkbenchServer(
               difficulty: 'expert',
               summary:
                 'A non-atomic idempotency check exposed only through causal execution evidence.',
+            },
+            {
+              id: 'trace-ablation',
+              name: 'Blind vs Trace A/B',
+              difficulty: 'measured',
+              summary:
+                'The same Gemini model and prompt run with and without TracePilot evidence under one fixed budget.',
             },
           ],
         });
@@ -292,39 +302,59 @@ async function executeBenchmarkRun({
     type: 'tool',
     title: 'Reproduce benchmark failure',
     detail:
-      run.scenario === 'idempotency-race'
-        ? 'Running the duplicate-delivery invariant check in a disposable workspace.'
-        : 'Running the checkout-service verification suite in a disposable workspace.',
+      run.scenario === 'trace-ablation'
+        ? 'Preparing byte-identical blind and trace-assisted production incident workspaces.'
+        : run.scenario === 'idempotency-race'
+          ? 'Running the duplicate-delivery invariant check in a disposable workspace.'
+          : 'Running the checkout-service verification suite in a disposable workspace.',
     status: 'running',
     data: { command: 'node --test' },
   });
 
   const isRace = run.scenario === 'idempotency-race';
-  const args = [
-    '--import',
-    'tsx',
-    isRace
-      ? 'scripts/demo-idempotency-race-repair.ts'
-      : 'scripts/demo-gemini-repair-agent.ts',
-    '--workdir',
-    workspace,
-    '--output',
-    output,
-    '--task',
-    run.prompt,
-  ];
-  if (run.mode === 'controlled') {
-    if (!isRace) {
-      args.push('--allow-missing-phoenix');
-    }
+  const isAblation = run.scenario === 'trace-ablation';
+  const args = ['--import', 'tsx'];
+  if (isAblation) {
     args.push(
-      '--agent-script',
-      isRace
-        ? 'scripts/testing/fake-idempotency-repair-agent.mjs'
-        : 'scripts/testing/fake-checkout-repair-agent.mjs',
+      'scripts/demo-trace-ablation.ts',
+      '--output',
+      output,
+      '--timeout-ms',
+      '120000',
     );
+    if (run.mode === 'controlled') {
+      args.push(
+        '--agent-script',
+        'scripts/testing/fake-trace-ablation-agent.mjs',
+      );
+    } else {
+      args.push('--env-file', path.resolve('.env'));
+    }
   } else {
-    args.push('--env-file', path.resolve('.env'));
+    args.push(
+      isRace
+        ? 'scripts/demo-idempotency-race-repair.ts'
+        : 'scripts/demo-gemini-repair-agent.ts',
+      '--workdir',
+      workspace,
+      '--output',
+      output,
+      '--task',
+      run.prompt,
+    );
+    if (run.mode === 'controlled') {
+      if (!isRace) {
+        args.push('--allow-missing-phoenix');
+      }
+      args.push(
+        '--agent-script',
+        isRace
+          ? 'scripts/testing/fake-idempotency-repair-agent.mjs'
+          : 'scripts/testing/fake-checkout-repair-agent.mjs',
+      );
+    } else {
+      args.push('--env-file', path.resolve('.env'));
+    }
   }
 
   const child = spawn(process.execPath, args, {
@@ -383,24 +413,48 @@ function publishProofLine(line: string, emit: RunContext['emit']): void {
     PROOF_LEVEL: { type: 'result', title: 'Proof level' },
     SESSION_ID: { type: 'status', title: 'Trace session' },
     REPORT: { type: 'result', title: 'Evidence report' },
+    MODEL: { type: 'status', title: 'Model selected' },
+    PROMPT_SHA256: { type: 'evidence', title: 'Prompt fingerprint' },
+    SAME_STARTING_WORKSPACE: {
+      type: 'evidence',
+      title: 'Identical starting workspace',
+    },
+    ABLATION_ARM: { type: 'evidence', title: 'Benchmark arm' },
+    ABLATION_OUTCOME: { type: 'result', title: 'Measured A/B outcome' },
   };
-  const definition = definitions[label];
+  const configured = definitions[label];
+  const definition =
+    label === 'ABLATION_ARM'
+      ? {
+          type: configured?.type ?? 'evidence',
+          title: remainder.startsWith('blind')
+            ? 'Blind arm'
+            : 'Trace-assisted arm',
+        }
+      : configured;
   if (!definition) {
     return;
   }
   const normalized = remainder.toUpperCase();
   const status =
-    label === 'TRACE_EVIDENCE' ||
-    normalized.includes('PASS') ||
-    normalized.includes('LIVE_')
-      ? 'pass'
-      : normalized.includes('FAIL')
-        ? 'fail'
-        : normalized.includes('DEGRADED') ||
-            normalized.includes('SIMULATED') ||
-            normalized.includes('CONTROLLED')
-          ? 'warn'
-          : 'running';
+    (label === 'ABLATION_ARM' && normalized.includes('SOLVED=FALSE')) ||
+    (label === 'SAME_STARTING_WORKSPACE' && normalized !== 'TRUE')
+      ? 'fail'
+      : label === 'TRACE_EVIDENCE' ||
+          (label === 'ABLATION_ARM' && normalized.includes('SOLVED=TRUE')) ||
+          (label === 'SAME_STARTING_WORKSPACE' && normalized === 'TRUE') ||
+          (label === 'ABLATION_OUTCOME' &&
+            normalized.includes('TRACE_ASSISTANCE_ADVANTAGE')) ||
+          normalized.includes('PASS') ||
+          normalized.includes('LIVE_')
+        ? 'pass'
+        : normalized.includes('FAIL')
+          ? 'fail'
+          : normalized.includes('DEGRADED') ||
+              normalized.includes('SIMULATED') ||
+              normalized.includes('CONTROLLED')
+            ? 'warn'
+            : 'running';
   emit({
     type: definition.type,
     title: definition.title,
@@ -537,7 +591,8 @@ function validateScenario(value: unknown): BenchmarkScenario {
   if (
     value === undefined ||
     value === 'checkout-service' ||
-    value === 'idempotency-race'
+    value === 'idempotency-race' ||
+    value === 'trace-ablation'
   ) {
     return value ?? 'checkout-service';
   }
@@ -598,6 +653,14 @@ function hasLiveEnv(env: NodeJS.ProcessEnv): boolean {
 }
 
 function summarizeResult(result: Record<string, unknown>): string {
+  if (typeof result['outcome'] === 'string') {
+    const arms = Array.isArray(result['arms']) ? result['arms'] : [];
+    const blind = arms.find((arm) => getRecord(arm)?.['arm'] === 'blind');
+    const assisted = arms.find(
+      (arm) => getRecord(arm)?.['arm'] === 'trace_assisted',
+    );
+    return `${result['outcome']}; blind=${getRecord(getRecord(blind)?.['hiddenAfter'])?.['score'] ?? 'unknown'} trace=${getRecord(getRecord(assisted)?.['hiddenAfter'])?.['score'] ?? 'unknown'}.`;
+  }
   const proofLevel =
     typeof result['proofLevel'] === 'string' ? result['proofLevel'] : 'unknown';
   const repair = getRecord(result['repair']);
