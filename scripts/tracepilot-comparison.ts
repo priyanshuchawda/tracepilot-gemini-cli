@@ -37,6 +37,10 @@ interface Options {
   cliPath: string;
   model: string;
   prompt: string;
+  fixture: string;
+  traceFile: string;
+  hiddenEvaluator: string;
+  memorySeed: string;
   agentScript?: string;
   budgetMs: number;
   memoryFile: string;
@@ -100,7 +104,7 @@ const DEFAULT_PROMPT = [
 async function main(argv: string[]): Promise<number> {
   const options = parseArgs(argv);
   dotenv.config({ path: options.envFile, quiet: true });
-  const fixture = path.resolve('examples/distributed-settlement-incident');
+  const fixture = path.resolve(options.fixture);
   const comparisonRoot = path.resolve(options.workdir);
   const test1 = path.join(comparisonRoot, 'test1');
   const test2 = path.join(comparisonRoot, 'test2');
@@ -129,12 +133,12 @@ async function main(argv: string[]): Promise<number> {
     },
   });
 
-  const memory = await loadSessionMemory(options.memoryFile);
+  const memory = await loadSessionMemory(
+    options.memoryFile,
+    options.memorySeed,
+  );
   const traceEvidence = JSON.parse(
-    await readFile(
-      path.resolve('scripts/testing/distributed-settlement-trace.json'),
-      'utf8',
-    ),
+    await readFile(path.resolve(options.traceFile), 'utf8'),
   ) as Record<string, unknown>;
   await mkdir(path.join(test2, '.tracepilot'), { recursive: true });
   await Promise.all([
@@ -169,8 +173,8 @@ async function main(argv: string[]): Promise<number> {
   });
 
   const before = await Promise.all([
-    inspectBefore(test1),
-    inspectBefore(test2),
+    inspectBefore(test1, options.hiddenEvaluator),
+    inspectBefore(test2, options.hiddenEvaluator),
   ]);
   emit({
     kind: 'evaluation',
@@ -198,6 +202,7 @@ async function main(argv: string[]): Promise<number> {
       before: before[0],
       agent: blindAgent,
       budgetMs: options.budgetMs,
+      hiddenEvaluator: options.hiddenEvaluator,
       sessionMemoryEntries: 0,
     }),
     finalizeArm({
@@ -209,6 +214,7 @@ async function main(argv: string[]): Promise<number> {
       before: before[1],
       agent: traceAgent,
       budgetMs: options.budgetMs,
+      hiddenEvaluator: options.hiddenEvaluator,
       sessionMemoryEntries: memory.entries?.length ?? 0,
     }),
   ]);
@@ -320,11 +326,12 @@ function summarizeTraceEvidence(traceEvidence: Record<string, unknown>) {
     spanCount: spans.length,
     repeatedMisses: spans.filter(
       (span) =>
-        getRecord(span)?.['operation'] === 'worker.idempotency_check' &&
-        getRecord(span)?.['outcome'] === 'miss',
+        String(getRecord(span)?.['operation'] ?? '').includes(
+          'idempotency_check',
+        ) && getRecord(span)?.['outcome'] === 'miss',
     ).length,
-    providerAttempts: spans.filter(
-      (span) => getRecord(span)?.['operation'] === 'provider.settlement',
+    providerAttempts: spans.filter((span) =>
+      String(getRecord(span)?.['operation'] ?? '').startsWith('provider.'),
     ).length,
   };
 }
@@ -343,18 +350,16 @@ function getRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-async function loadSessionMemory(memoryFile: string): Promise<{
+async function loadSessionMemory(
+  memoryFile: string,
+  memorySeed: string,
+): Promise<{
   schemaVersion: number;
   entries: Array<Record<string, unknown>>;
 }> {
-  const seed = JSON.parse(
-    await readFile(
-      path.resolve(
-        'scripts/testing/distributed-settlement-session-memory.json',
-      ),
-      'utf8',
-    ),
-  ) as { entries?: Array<Record<string, unknown>> };
+  const seed = JSON.parse(await readFile(memorySeed, 'utf8')) as {
+    entries?: Array<Record<string, unknown>>;
+  };
   let persisted: { entries?: Array<Record<string, unknown>> } = {};
   try {
     persisted = JSON.parse(await readFile(memoryFile, 'utf8')) as {
@@ -406,10 +411,10 @@ async function recordVerifiedSessionOutcome(
   );
 }
 
-async function inspectBefore(workspace: string) {
+async function inspectBefore(workspace: string, hiddenEvaluator: string) {
   const [publicTests, hidden] = await Promise.all([
     runCommand(workspace, ['--test']),
-    runHiddenEvaluator(workspace),
+    runHiddenEvaluator(workspace, hiddenEvaluator),
   ]);
   return { publicTests, hidden };
 }
@@ -423,11 +428,12 @@ async function finalizeArm(input: {
   before: Awaited<ReturnType<typeof inspectBefore>>;
   agent: CommandResult;
   budgetMs: number;
+  hiddenEvaluator: string;
   sessionMemoryEntries: number;
 }): Promise<ArmResult> {
   const [publicAfter, hiddenAfter, changedFiles] = await Promise.all([
     runCommand(input.workspace, ['--test']),
-    runHiddenEvaluator(input.workspace),
+    runHiddenEvaluator(input.workspace, input.hiddenEvaluator),
     changedFilesAgainstFixture(input.fixture, input.workspace),
   ]);
   const productionChangedFiles = changedFiles.filter((file) =>
@@ -567,9 +573,12 @@ async function runAgent(
   );
 }
 
-async function runHiddenEvaluator(workspace: string): Promise<Evaluation> {
+async function runHiddenEvaluator(
+  workspace: string,
+  hiddenEvaluator: string,
+): Promise<Evaluation> {
   const result = await runCommand(workspace, [
-    path.resolve('scripts/testing/distributed-settlement-hidden-evaluator.mjs'),
+    path.resolve(hiddenEvaluator),
     workspace,
   ]);
   try {
@@ -671,6 +680,8 @@ function emitAgentActivity(
     const parsed = JSON.parse(trimmed) as { step?: unknown; status?: unknown };
     if (typeof parsed.step === 'string') {
       detail = parsed.step;
+    } else {
+      return activityCount;
     }
   } catch {
     detail = trimmed.slice(0, 120);
@@ -783,6 +794,11 @@ function parseArgs(argv: string[]): Options {
     cliPath: path.resolve('packages/cli/dist/index.js'),
     model: 'gemini-3.1-flash-lite-preview',
     prompt: DEFAULT_PROMPT,
+    fixture: 'examples/distributed-settlement-incident',
+    traceFile: 'scripts/testing/distributed-settlement-trace.json',
+    hiddenEvaluator:
+      'scripts/testing/distributed-settlement-hidden-evaluator.mjs',
+    memorySeed: 'scripts/testing/distributed-settlement-session-memory.json',
     budgetMs: 120_000,
     memoryFile: path.resolve(
       '.ai-logs/tracepilot-comparison/session-memory.json',
@@ -798,6 +814,11 @@ function parseArgs(argv: string[]): Options {
       options.cliPath = path.resolve(value);
     if (argv[index] === '--model' && value) options.model = value;
     if (argv[index] === '--prompt' && value) options.prompt = value;
+    if (argv[index] === '--fixture' && value) options.fixture = value;
+    if (argv[index] === '--trace-file' && value) options.traceFile = value;
+    if (argv[index] === '--hidden-evaluator' && value)
+      options.hiddenEvaluator = value;
+    if (argv[index] === '--memory-seed' && value) options.memorySeed = value;
     if (argv[index] === '--agent-script' && value) options.agentScript = value;
     if (argv[index] === '--budget-ms' && value)
       options.budgetMs = Number.parseInt(value, 10);
