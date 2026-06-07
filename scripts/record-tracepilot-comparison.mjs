@@ -19,7 +19,7 @@ const output =
   );
 const prompt =
   process.argv[3] ??
-  'A production settlement was charged twice after a delivery retry. Compare both agents fairly and verify all production invariants.';
+  'A global billing platform double-charged an enterprise invoice after a cross-region webhook replay. Repair concurrency, retry, payload-conflict, risk-cache, and PII telemetry failures.';
 const finalHoldMs = Number.parseInt(
   process.env['TRACEPILOT_RECORD_FINAL_HOLD_MS'] ?? '60000',
   10,
@@ -125,7 +125,7 @@ try {
   await run(ffmpegPath, [
     '-y',
     '-framerate',
-    '3',
+    '1.5',
     '-i',
     path.join(frameDir, 'frame-%05d.png'),
     '-r',

@@ -217,16 +217,16 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
           {
             arm: 'blind',
             evidenceAccess: false,
-            hiddenAfter: { passed: 1, total: 3 },
-            metrics: { bugHits: 1, bugMisses: 2 },
+            hiddenAfter: { passed: 1, total: 5 },
+            metrics: { bugHits: 1, bugMisses: 4 },
             solved: false,
           },
           {
             arm: 'tracepilot',
             evidenceAccess: true,
             sessionMemoryEntries: expect.any(Number),
-            hiddenAfter: { passed: 3, total: 3 },
-            metrics: { bugHits: 3, bugMisses: 0 },
+            hiddenAfter: { passed: 5, total: 5 },
+            metrics: { bugHits: 5, bugMisses: 0 },
             solved: true,
           },
         ],
@@ -234,6 +234,16 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
     });
     expect(run.events).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          title: 'Arize evidence retrieved',
+          status: 'pass',
+          data: expect.objectContaining({
+            arm: 'tracepilot',
+            traceEvidence: expect.objectContaining({
+              finding: 'multi_boundary_reservation_gap',
+            }),
+          }),
+        }),
         expect.objectContaining({
           title: 'External evaluation complete',
           status: 'fail',

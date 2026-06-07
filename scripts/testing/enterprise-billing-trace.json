@@ -1,0 +1,49 @@
+{
+  "incident": "enterprise billing double charge after regional webhook replay",
+  "correlationId": "bill-prod-9d2c",
+  "invariant": "one externally charged invoice per idempotency key across regions, retries, risk decisions, and telemetry",
+  "spans": [
+    {
+      "region": "us-east-1",
+      "operation": "worker.local_idempotency_check",
+      "keyHash": "sha256:a91e",
+      "outcome": "miss"
+    },
+    {
+      "region": "eu-west-1",
+      "operation": "worker.local_idempotency_check",
+      "keyHash": "sha256:a91e",
+      "outcome": "miss"
+    },
+    {
+      "region": "us-east-1",
+      "operation": "provider.charge",
+      "attempt": 1
+    },
+    {
+      "region": "eu-west-1",
+      "operation": "provider.charge",
+      "attempt": 2
+    },
+    {
+      "operation": "risk.cache_hit",
+      "cacheKey": "account-only",
+      "outcome": "allowed-high-risk-payload"
+    },
+    {
+      "operation": "telemetry.emit",
+      "fields": ["customerEmail", "cardLast4"]
+    }
+  ],
+  "causalFinding": {
+    "kind": "multi_boundary_reservation_gap",
+    "detail": "Regional workers accepted the same billing webhook using local maps while risk and telemetry side effects escaped the shared ledger boundary.",
+    "requiredBoundary": "atomic shared ledger reservation with payload fingerprint, scoped risk cache, retry release, and PII-safe telemetry",
+    "mustPreserve": [
+      "failed provider attempts remain retryable",
+      "same key with different payload is rejected",
+      "risk decisions are scoped to the full billing payload",
+      "telemetry never emits customer email or card digits"
+    ]
+  }
+}

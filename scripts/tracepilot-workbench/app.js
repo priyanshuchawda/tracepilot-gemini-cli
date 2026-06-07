@@ -659,6 +659,10 @@ function hiddenCheckLabel(id) {
     cross_worker_atomicity: 'Cross-worker duplicate charge',
     failed_reservation_released: 'Failed reservation retry recovery',
     payload_conflict_rejected: 'Payload conflict rejection',
+    cross_region_atomic_idempotency: 'Cross-region duplicate billing',
+    failed_provider_reservation_released: 'Failed provider retry release',
+    risk_cache_is_payload_scoped: 'Risk cache scoped by payload',
+    telemetry_redacts_pii: 'PII-safe billing telemetry',
   };
   return labels[id] ?? titleCase(String(id).replaceAll('_', ' '));
 }

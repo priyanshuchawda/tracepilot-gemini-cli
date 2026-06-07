@@ -325,6 +325,14 @@ async function executeBenchmarkRun({
       run.prompt,
       '--budget-ms',
       '120000',
+      '--fixture',
+      'examples/enterprise-billing-incident',
+      '--trace-file',
+      'scripts/testing/enterprise-billing-trace.json',
+      '--hidden-evaluator',
+      'scripts/testing/enterprise-billing-hidden-evaluator.mjs',
+      '--memory-seed',
+      'scripts/testing/enterprise-billing-session-memory.json',
     );
     if (run.mode === 'controlled') {
       args.push(

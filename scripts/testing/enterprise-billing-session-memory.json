@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "enterprise-billing-boundary-001",
+      "incident": "regional webhook replay caused duplicate billing",
+      "observedOutcome": "shared ledger reservation fixed duplicate charge, retry release, payload conflict, risk cache scope, and telemetry redaction",
+      "productionChangedFiles": ["src/billing.js"],
+      "source": "sanitized verified session outcome"
+    }
+  ]
+}
