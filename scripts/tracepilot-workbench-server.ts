@@ -316,10 +316,14 @@ async function executeBenchmarkRun({
   const args = ['--import', 'tsx'];
   if (isAblation) {
     args.push(
-      'scripts/demo-trace-ablation.ts',
+      'scripts/tracepilot-comparison.ts',
+      '--workdir',
+      path.join(runDir, 'workspaces'),
       '--output',
       output,
-      '--timeout-ms',
+      '--prompt',
+      run.prompt,
+      '--budget-ms',
       '120000',
     );
     if (run.mode === 'controlled') {
@@ -385,6 +389,29 @@ async function executeBenchmarkRun({
 function publishProofLine(line: string, emit: RunContext['emit']): void {
   const sanitized = sanitize(line.trim());
   if (!sanitized) {
+    return;
+  }
+  if (sanitized.startsWith('COMPARISON_EVENT: ')) {
+    const payload = JSON.parse(
+      sanitized.slice('COMPARISON_EVENT: '.length),
+    ) as {
+      arm?: 'blind' | 'tracepilot';
+      kind?: string;
+      title?: string;
+      detail?: string;
+      status?: 'running' | 'pass' | 'warn' | 'fail';
+      data?: Record<string, unknown>;
+    };
+    emit({
+      type: comparisonEventType(payload.kind),
+      title: payload.title ?? 'Comparison event',
+      detail: payload.detail,
+      status: payload.status ?? 'running',
+      data: {
+        ...(payload.data ?? {}),
+        ...(payload.arm ? { arm: payload.arm } : {}),
+      },
+    });
     return;
   }
   const [label, remainder = ''] = sanitized.split(/:\s+/, 2);
@@ -461,6 +488,14 @@ function publishProofLine(line: string, emit: RunContext['emit']): void {
     detail: remainder,
     status,
   });
+}
+
+function comparisonEventType(kind: string | undefined): WorkbenchEvent['type'] {
+  if (kind === 'plan') return 'reasoning';
+  if (kind === 'tool') return 'tool';
+  if (kind === 'evidence' || kind === 'evaluation') return 'evidence';
+  if (kind === 'result') return 'result';
+  return 'status';
 }
 
 function publish(
@@ -657,7 +692,9 @@ function summarizeResult(result: Record<string, unknown>): string {
     const arms = Array.isArray(result['arms']) ? result['arms'] : [];
     const blind = arms.find((arm) => getRecord(arm)?.['arm'] === 'blind');
     const assisted = arms.find(
-      (arm) => getRecord(arm)?.['arm'] === 'trace_assisted',
+      (arm) =>
+        getRecord(arm)?.['arm'] === 'tracepilot' ||
+        getRecord(arm)?.['arm'] === 'trace_assisted',
     );
     return `${result['outcome']}; blind=${getRecord(getRecord(blind)?.['hiddenAfter'])?.['score'] ?? 'unknown'} trace=${getRecord(getRecord(assisted)?.['hiddenAfter'])?.['score'] ?? 'unknown'}.`;
   }
