@@ -207,20 +207,26 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
       scenario: 'trace-ablation',
       result: {
         ok: true,
-        samePrompt: true,
-        sameStartingWorkspace: true,
-        outcome: 'trace_assistance_advantage',
+        winner: 'tracepilot',
+        outcome: 'tracepilot_advantage',
+        fairness: {
+          samePrompt: true,
+          sameStartingWorkspace: true,
+        },
         arms: [
           {
             arm: 'blind',
             evidenceAccess: false,
-            hiddenAfter: { score: 1 / 3 },
+            hiddenAfter: { passed: 1, total: 3 },
+            metrics: { bugHits: 1, bugMisses: 2 },
             solved: false,
           },
           {
-            arm: 'trace_assisted',
+            arm: 'tracepilot',
             evidenceAccess: true,
-            hiddenAfter: { score: 1 },
+            sessionMemoryEntries: expect.any(Number),
+            hiddenAfter: { passed: 3, total: 3 },
+            metrics: { bugHits: 3, bugMisses: 0 },
             solved: true,
           },
         ],
@@ -228,13 +234,18 @@ describe('scripts/tracepilot-workbench-server.ts', () => {
     });
     expect(run.events).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ title: 'Blind arm', status: 'fail' }),
         expect.objectContaining({
-          title: 'Trace-assisted arm',
-          status: 'pass',
+          title: 'External evaluation complete',
+          status: 'fail',
+          data: expect.objectContaining({ arm: 'blind' }),
         }),
         expect.objectContaining({
-          title: 'Measured A/B outcome',
+          title: 'External evaluation complete',
+          status: 'pass',
+          data: expect.objectContaining({ arm: 'tracepilot' }),
+        }),
+        expect.objectContaining({
+          title: 'Comparison complete',
           status: 'pass',
         }),
       ]),
@@ -270,14 +281,14 @@ async function createRun(baseUrl: string, scenario = 'checkout-service') {
 }
 
 async function waitForTerminalRun(baseUrl: string, runId: string) {
-  for (let attempt = 0; attempt < 80; attempt++) {
+  for (let attempt = 0; attempt < 180; attempt++) {
     const run = await fetch(`${baseUrl}/api/runs/${runId}`).then((response) =>
       response.json(),
     );
     if (['completed', 'failed', 'canceled'].includes(run.status)) {
       return run;
     }
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error('Workbench run did not reach a terminal state.');
 }

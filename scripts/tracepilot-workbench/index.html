@@ -79,6 +79,98 @@
           </div>
         </section>
 
+        <section id="comparison-view" class="comparison-view hidden">
+          <div class="fairness-strip">
+            <span class="fairness-label">Fair run</span>
+            <span id="fairness-model">Same model</span>
+            <span id="fairness-prompt">Same prompt</span>
+            <span id="fairness-workspace">Same source hash</span>
+            <span id="fairness-budget">120s shared deadline</span>
+          </div>
+
+          <section class="comparison-summary">
+            <div>
+              <p class="eyebrow">External hidden evaluator</p>
+              <h2 id="comparison-summary-verdict">Awaiting both agents</h2>
+            </div>
+            <div class="summary-score-grid">
+              <div>
+                <span>Gemini CLI</span>
+                <b id="summary-blind-score">—</b>
+                <small>
+                  <span id="summary-blind-accuracy">—</span> accuracy ·
+                  <span id="summary-blind-hits">—</span> hits/misses
+                </small>
+              </div>
+              <div>
+                <span>TracePilot + Gemini</span>
+                <b id="summary-trace-score">—</b>
+                <small>
+                  <span id="summary-trace-accuracy">—</span> accuracy ·
+                  <span id="summary-trace-hits">—</span> hits/misses
+                </small>
+              </div>
+            </div>
+          </section>
+
+          <div class="comparison-grid">
+            <article class="agent-pane blind-pane">
+              <header class="agent-pane-header">
+                <div>
+                  <p class="eyebrow">test1 · repository only</p>
+                  <h2>Gemini CLI</h2>
+                </div>
+                <div class="agent-state">
+                  <span id="blind-status" class="activity-status">Waiting</span>
+                  <time id="blind-timer">00:00</time>
+                </div>
+              </header>
+              <div id="blind-stream" class="agent-stream">
+                <p class="muted">Waiting for comparison.</p>
+              </div>
+              <footer class="agent-metrics">
+                <div><span>Accuracy</span><b id="blind-accuracy">—</b></div>
+                <div><span>Hits / misses</span><b id="blind-hits">—</b></div>
+                <div><span>Speed</span><b id="blind-speed">—</b></div>
+                <div><span>Total</span><b id="blind-score">—</b></div>
+              </footer>
+            </article>
+
+            <article class="agent-pane trace-pane">
+              <header class="agent-pane-header">
+                <div>
+                  <p class="eyebrow">test2 · Phoenix + session evidence</p>
+                  <h2>TracePilot + Gemini</h2>
+                </div>
+                <div class="agent-state">
+                  <span id="trace-status" class="activity-status">Waiting</span>
+                  <time id="trace-timer">00:00</time>
+                </div>
+              </header>
+              <div id="trace-stream" class="agent-stream">
+                <p class="muted">Waiting for comparison.</p>
+              </div>
+              <footer class="agent-metrics">
+                <div><span>Accuracy</span><b id="trace-accuracy">—</b></div>
+                <div><span>Hits / misses</span><b id="trace-hits">—</b></div>
+                <div><span>Speed</span><b id="trace-speed">—</b></div>
+                <div><span>Total</span><b id="trace-score">—</b></div>
+              </footer>
+            </article>
+          </div>
+
+          <section id="comparison-result" class="comparison-result">
+            <div>
+              <p class="eyebrow">External hidden evaluator</p>
+              <h2 id="comparison-verdict">Awaiting both agents</h2>
+            </div>
+            <div class="result-scores">
+              <span>Gemini <b id="result-blind-score">—</b></span>
+              <span>TracePilot <b id="result-trace-score">—</b></span>
+            </div>
+          </section>
+        </section>
+
         <form id="task-form" class="composer">
           <textarea
             id="task-input"
@@ -93,7 +185,7 @@
               <span>Disposable workspace</span>
             </div>
             <button id="run-button" type="submit" class="run-button">
-              <span>Run repair</span>
+              <span id="run-button-label">Run repair</span>
               <span aria-hidden="true">↑</span>
             </button>
           </div>

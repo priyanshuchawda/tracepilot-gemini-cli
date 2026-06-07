@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "settlement-retry-cross-worker-001",
+      "failureSignature": "duplicate settlement after retried delivery",
+      "environment": "multi-worker",
+      "observedOutcome": "process-local deduplication passed public tests but failed cross-worker atomicity",
+      "verifiedLesson": "idempotency reservation must use the shared coordinator boundary",
+      "preserve": [
+        "failed reservations remain retryable",
+        "same idempotency key with a different payload is rejected"
+      ],
+      "source": "sanitized verified session outcome"
+    }
+  ]
+}
