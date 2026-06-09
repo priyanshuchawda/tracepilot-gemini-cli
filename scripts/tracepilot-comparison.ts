@@ -729,14 +729,17 @@ async function changedFilesAgainstFixture(
   workspace: string,
 ): Promise<string[]> {
   const fixtureFiles = await fileContents(fixture);
-  const workspaceFiles = await fileContents(workspace, ['.tracepilot']);
+  const workspaceFiles = await fileContents(
+    workspace,
+    GENERATED_DIRECTORY_EXCLUDES,
+  );
   return [...new Set([...fixtureFiles.keys(), ...workspaceFiles.keys()])]
     .filter((file) => fixtureFiles.get(file) !== workspaceFiles.get(file))
     .sort();
 }
 
 async function digestDirectory(root: string): Promise<string> {
-  const files = await fileContents(root, ['.tracepilot']);
+  const files = await fileContents(root, GENERATED_DIRECTORY_EXCLUDES);
   const hash = createHash('sha256');
   for (const [file, content] of files) {
     hash.update(file);
@@ -773,6 +776,15 @@ async function fileContents(
   }
   return result;
 }
+
+const GENERATED_DIRECTORY_EXCLUDES = [
+  '.tracepilot',
+  'coverage',
+  'dist',
+  'node_modules',
+  'out',
+  'tmp',
+];
 
 function emit(event: {
   arm?: ArmName;

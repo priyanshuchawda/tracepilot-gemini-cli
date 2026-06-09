@@ -24,6 +24,7 @@ const finalHoldMs = Number.parseInt(
   process.env['TRACEPILOT_RECORD_FINAL_HOLD_MS'] ?? '25000',
   10,
 );
+const recordMode = process.env['TRACEPILOT_RECORD_MODE'] ?? 'live';
 const fakeAgentDelayMs =
   process.env['TRACEPILOT_FAKE_AGENT_DELAY_MS'] ?? '45000';
 
@@ -97,7 +98,7 @@ try {
     client,
     `
     document.querySelector('#new-run-button')?.click();
-    document.querySelector('[data-mode="controlled"]')?.click();
+    document.querySelector('[data-mode="${recordMode}"]')?.click();
     const scenario = document.querySelector('#scenario-select');
     scenario.value = 'trace-ablation';
     scenario.dispatchEvent(new Event('change', { bubbles: true }));

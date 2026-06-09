@@ -43,7 +43,7 @@ import {
   buildTraceRepairEvidenceText,
   queryPhoenixForFailedToolCall,
 } from '../telemetry/phoenixSelfIntrospection.js';
-import { buildTraceEvidenceRepairPlan } from '../tracepilot/repairPlanner.js';
+import { buildTraceEvidenceRepairPlan, type TracePilotRepairPlan } from '../tracepilot/repairPlanner.js';
 import { populateToolDisplay } from '../agent/tool-display-utils.js';
 import type { EditorType } from '../utils/editor.js';
 import {
@@ -958,6 +958,9 @@ export class Scheduler {
       result,
       introspection,
     );
+    // ── TracePilot Terminal UI: Phoenix Retrieval Status ──────────────────
+    this._emitTracePilotRepairStatus(repairPlan);
+
     const request = result.request ?? {
       callId: result.response.callId,
       name: 'unknown',
@@ -1052,6 +1055,36 @@ export class Scheduler {
       error: result.response.error,
       errorType: result.response.errorType,
     };
+  }
+
+  private _emitTracePilotRepairStatus(repairPlan: TracePilotRepairPlan): void {
+    const candidates = repairPlan.historicalRepairCandidates ?? [];
+    const confidence = repairPlan.confidence?.score;
+    const risk = repairPlan.patchRisk?.level;
+    const lines: string[] = [
+      '',
+      '\x1b[36m╔══ TracePilot: Phoenix Repair Intelligence ══════════════════╗\x1b[0m',
+    ];
+    if (candidates.length > 0) {
+      const top = candidates[0]!;
+      lines.push(
+        `\x1b[36m║\x1b[0m  \x1b[32m✓ Historical repair retrieved\x1b[0m  similarity=${(top.similarityScore * 100).toFixed(0)}%  outcome=${(top.historicalOutcomeScore * 100).toFixed(0)}%`,
+        `\x1b[36m║\x1b[0m    Session: ${top.session.sessionId}`,
+        `\x1b[36m║\x1b[0m    Matched: [${top.matchedReasons.join(', ')}]`,
+      );
+      if (top.session.strategy.length > 0) {
+        lines.push(`\x1b[36m║\x1b[0m    Strategy: ${top.session.strategy[0]}`);
+      }
+    } else {
+      lines.push(
+        `\x1b[36m║\x1b[0m  \x1b[33m⚠ No historical repairs matched (cold start)\x1b[0m`,
+      );
+    }
+    if (confidence !== undefined) {
+      lines.push(`\x1b[36m║\x1b[0m  Confidence: ${(confidence * 100).toFixed(0)}%  Risk: ${risk ?? 'UNKNOWN'}`);
+    }
+    lines.push('\x1b[36m╚═══════════════════════════════════════════════════════════╝\x1b[0m', '');
+    process.stderr.write(lines.join('\n') + '\n');
   }
 
   private _processNextInRequestQueue() {
