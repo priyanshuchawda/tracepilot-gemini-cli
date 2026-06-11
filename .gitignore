@@ -64,6 +64,8 @@ gha-creds-*.json
 # Log files
 patch_output.log
 gemini-debug.log
+*.log
+logs/
 .ai-logs/
 .ai_runs/
 .ai-tmp/
@@ -74,6 +76,38 @@ gemini-debug.log
 evals/logs/
 
 temp_agents/
+
+# Raw recordings and rendered video
+recordings/
+raw-recordings/
+video-output/
+*.mp4
+*.mov
+*.mkv
+*.webm
+
+# Benchmark and temporary report output
+benchmark-output/
+benchmark-results/
+.benchmarks/
+.reports/
+reports/
+tmp/
+temp/
+
+# Local cloud and deployment state
+.gcloud/
+.firebase/
+cloud-run-local/
+cloud-run-output/
+
+# Build and test caches
+.cache/
+.next/
+.turbo/
+coverage/
+test-results/
+playwright-report/
 
 # conductor extension and planning directories
 conductor/
