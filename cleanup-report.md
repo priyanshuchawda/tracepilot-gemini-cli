@@ -65,3 +65,5 @@ errors already present on `main`:
 - Malformed shell operator runs such as `&&&` now classify as a high-risk
   `parse_error`.
 - Unused imports/variables and one unnecessary type assertion were removed.
+- ESLint now ignores generated TracePilot run output, preventing focused tests
+  from making the following lint gate fail on `.ai-logs/` fixtures.
