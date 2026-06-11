@@ -189,6 +189,10 @@ function parseCommandSegments(
     return { segments: expandSegments(fallbackSegments), parserFailed: true };
   }
 
+  if (/[&|]{3,}/.test(command)) {
+    return { segments: expandSegments(fallbackSegments), parserFailed: true };
+  }
+
   if (!parsed) {
     return { segments: expandSegments(fallbackSegments), parserFailed: false };
   }

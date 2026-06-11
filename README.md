@@ -4,6 +4,12 @@ TracePilot is a forked Gemini CLI TypeScript agent runtime with Phoenix
 observability, OpenInference-style spans, Phoenix MCP self-introspection, safety
 gates, redaction, deterministic evals, and a broken-repo repair demo.
 
+Normal coding agents primarily reason from the current prompt, repository, and
+tool output. TracePilot additionally stores sanitized evidence from successful,
+verified repairs and retrieves relevant prior repair evidence through Phoenix
+before deciding how to handle a similar failure. Retrieved evidence informs the
+repair plan; it does not bypass command safety or verification.
+
 This public repository is being hardened from a successful proof demo into a
 developer-facing repair reliability product foundation. It is not a claim that
 TracePilot is production-ready for arbitrary repositories without the documented
@@ -30,6 +36,34 @@ TracePilot is built to prove this repair loop:
 9. The test passes.
 10. A deterministic eval result is logged.
 11. Judge input/result artifacts are written for repair-quality review.
+
+## Repair Memory
+
+A completed repair produces a structured, sanitized repair report containing
+the failure signature, root cause, actions taken, verification results,
+confidence, and proof level. TracePilot exports that report as Phoenix-visible
+trace evidence.
+
+On a later failure, TracePilot derives a failure signature and queries Phoenix
+through MCP for matching successful repairs. The repair planner receives the
+retrieved evidence with provenance and confidence. It can reuse the prior
+diagnosis or reject it when the current repository state does not match. A
+repair is not recorded as successful until its verification matrix passes.
+
+The implementation and focused tests are in:
+
+- `packages/core/src/tracepilot/repairReport.ts`
+- `packages/core/src/tracepilot/repairPlanner.ts`
+- `packages/core/src/telemetry/phoenixSelfIntrospection.ts`
+- `scripts/demo-phoenix-repair-memory-replay.ts`
+
+## Phoenix Workflow
+
+Phoenix is both the observability backend and the retrieval surface for repair
+memory. OpenInference-style spans capture failures and completed repair reports.
+Phoenix MCP lets the agent inspect matching prior evidence during a later repair
+session. The smoke tests separately verify OTEL export and MCP visibility so a
+local-only result cannot be presented as live Phoenix proof.
 
 Latest verified Phoenix evidence:
 
@@ -112,6 +146,24 @@ npm run dashboard:tracepilot -- --report .ai-logs/demo-broken-node-app/result.js
 npm run workbench:tracepilot
 npm run smoke:cloud-run:local
 ```
+
+## Judge Evaluation
+
+The shortest credential-free evaluation path is:
+
+```bash
+npm ci
+npm run test:tracepilot
+npm run demo:phoenix-repair-memory:controlled
+npm run demo:broken-node-app:offline
+npm run smoke:cloud-run:local
+```
+
+This verifies the repair planner, repair-memory replay contract, deterministic
+evaluation, evidence generation, and local Cloud Run service contract without
+claiming live Phoenix proof. Judges with Phoenix credentials can then run
+`npm run smoke:phoenix`, `npm run smoke:phoenix:mcp`, and
+`npm run demo:phoenix-repair-memory` to verify live export and retrieval.
 
 Use focused checks during development because the full root `npm test` is long.
 `ci:tracepilot` writes required, optional, and skipped gate results to

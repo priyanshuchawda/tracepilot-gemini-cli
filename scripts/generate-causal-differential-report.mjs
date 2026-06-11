@@ -29,7 +29,6 @@ const num = v => v != null ? v.toString() : '—';
 const badge = (ok, t = '✅ YES', f = '❌ NO') => ok
   ? `<span class="badge ok">${t}</span>`
   : `<span class="badge no">${f}</span>`;
-const neutral = v => `<span class="badge neutral">${v ?? '—'}</span>`;
 const changed = (a, b) => a !== b && a != null && b != null;
 
 const verdictClass = {
