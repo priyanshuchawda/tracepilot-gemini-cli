@@ -18,7 +18,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, copyFile, cp } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
@@ -209,8 +209,6 @@ async function main() {
   const phoenixMem = await queryPhoenixSession(sessionMem);
   const planSpanMem = phoenixMem.spans.find(s => s.name === 'gemini_cli.chain.repair_plan');
   const retrieveSpanMem = phoenixMem.spans.find(s => s.name === 'gemini_cli.chain.repair_memory_retrieve');
-  const introspectionSpanMem = phoenixMem.spans.find(s => s.name === 'gemini_cli.chain.phoenix_self_introspection');
-
   evidence.withMemory.phoenixSpans = {
     total: phoenixMem.spans.length,
     spanNames: [...new Set(phoenixMem.spans.map(s => s.name))].sort(),

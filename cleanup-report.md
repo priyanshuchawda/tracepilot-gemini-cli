@@ -56,3 +56,12 @@ engineering evidence retained in place to avoid breaking links.
 `.gitignore` now excludes raw recordings, rendered videos, benchmark output,
 temporary reports, logs, local cloud/deployment state, build caches, coverage,
 and common test output.
+
+## Confirmed Submission Blockers Fixed
+
+GitHub TracePilot CI exposed one fail-closed safety regression and seven lint
+errors already present on `main`:
+
+- Malformed shell operator runs such as `&&&` now classify as a high-risk
+  `parse_error`.
+- Unused imports/variables and one unnecessary type assertion were removed.

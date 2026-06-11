@@ -197,6 +197,10 @@ function parseCommandSegments(
     return { segments: expandSegments(fallbackSegments), parserFailed: true };
   }
 
+  if (/[&|]{3,}/.test(command)) {
+    return { segments: expandSegments(fallbackSegments), parserFailed: true };
+  }
+
   const structuredSegments = parsed.details
     .filter((detail) => !REDIRECTION_NAMES.has(detail.name))
     .map((detail) => segmentFromParsedDetail(detail))

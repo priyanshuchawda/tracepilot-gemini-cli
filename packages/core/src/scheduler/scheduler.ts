@@ -1066,7 +1066,7 @@ export class Scheduler {
       '\x1b[36m╔══ TracePilot: Phoenix Repair Intelligence ══════════════════╗\x1b[0m',
     ];
     if (candidates.length > 0) {
-      const top = candidates[0]!;
+      const top = candidates[0];
       lines.push(
         `\x1b[36m║\x1b[0m  \x1b[32m✓ Historical repair retrieved\x1b[0m  similarity=${(top.similarityScore * 100).toFixed(0)}%  outcome=${(top.historicalOutcomeScore * 100).toFixed(0)}%`,
         `\x1b[36m║\x1b[0m    Session: ${top.session.sessionId}`,

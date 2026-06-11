@@ -17,16 +17,14 @@
  *   node scripts/run-repair-memory-demo.mjs --model gemini-3.1-flash-lite-preview
  */
 
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { resolve, dirname, join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import dotenv from 'dotenv';
 
-const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 

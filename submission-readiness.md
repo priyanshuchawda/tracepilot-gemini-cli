@@ -11,15 +11,10 @@ planning. Cleanup changes do not alter runtime behavior.
 
 ## Critical
 
-- **Executable release verification is incomplete on this workstation.**
+- **Executable local verification is incomplete on this workstation.**
   `npm ci` failed with `ENOSPC` while extracting dependencies. At failure time,
-  the C: drive had approximately 212 MB free. Build, typecheck, focused tests,
-  controlled repair-memory replay, offline demo, and local Cloud Run smoke
-  therefore could not be executed in this checkout.
-
-Required resolution before merge: run the PR's `TracePilot CI` workflow
-successfully or rerun the documented local checks on a machine with sufficient
-disk space.
+  the C: drive had approximately 212 MB free. GitHub's TracePilot CI workflow is
+  the required executable merge gate.
 
 ## High
 
