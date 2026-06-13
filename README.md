@@ -1,4 +1,4 @@
-# TracePilot
+# TracePilot - editted gemini cli
 
 TracePilot is a forked Gemini CLI TypeScript agent runtime with Phoenix
 observability, OpenInference-style spans, Phoenix MCP self-introspection, safety
